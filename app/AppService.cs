@@ -78,6 +78,9 @@ public sealed partial class AppService : IDisposable
             if(receipts is not JsonArray items||items.Any(x=>x is not JsonObject r||S(r,"requestId").Length==0||r["reminders"] is not JsonArray reminders||reminders.Any(y=>y is not JsonObject alarm||S(alarm,"id").Length==0)))
                 throw new InvalidDataException("聊天提醒的创建记录格式无效。");
         }
+        if(s["mobileMutationReceipts"] is JsonNode mobileReceipts &&
+            (mobileReceipts is not JsonArray mobileItems || mobileItems.Any(x=>x is not JsonObject r||S(r,"requestId").Length==0||S(r,"fingerprint").Length!=64)))
+            throw new InvalidDataException("手机修改的保存记录格式无效。");
         foreach (var key in new[]{"archivedStudents","deletedTasks"})
         {
             s[key] ??= new JsonArray();
@@ -118,6 +121,7 @@ public sealed partial class AppService : IDisposable
             var view = (JsonObject)state.DeepClone();
             view.Remove("deletedTasks");
             view.Remove("assistantReminderReceipts");
+            view.Remove("mobileMutationReceipts");
             var settings = (JsonObject)view["settings"]!;
             settings["aiConfigured"] = IsAiConfigured();
             settings["dataRoot"] = root;

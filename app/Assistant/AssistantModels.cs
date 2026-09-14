@@ -50,6 +50,14 @@ internal sealed class AssistantState
     // The recoverable cleared conversation is kept in the same atomic history file.
     public List<AssistantMessage> ClearedMessages { get; set; } = [];
     public string ClearedError { get; set; } = "";
+    // Kept outside Messages so clearing/restarting cannot replay a mobile write.
+    public List<AssistantMobileReceipt> MobileReceipts { get; set; } = [];
+}
+
+internal sealed class AssistantMobileReceipt
+{
+    public string RequestId { get; set; } = "";
+    public string Fingerprint { get; set; } = "";
 }
 
 internal static class AssistantJson
@@ -97,6 +105,8 @@ internal sealed class AssistantStore
                 ?? throw new InvalidDataException("聊天记录为空。");
             if (state.SchemaVersion != 1 || state.Messages == null)
                 throw new InvalidDataException("不支持的聊天记录版本。");
+            if (state.MobileReceipts == null || state.MobileReceipts.Any(r => r == null || r.RequestId.Length == 0 || r.Fingerprint.Length != 64))
+                throw new InvalidDataException("手机聊天的保存记录格式无效。");
             state.AutoUpdate = ReadAutoUpdate();
             if (state.Interrupted)
             {

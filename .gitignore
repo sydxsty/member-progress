@@ -5,6 +5,8 @@
 !/README.md
 !/docs/
 !/app/
+!/mobile/
+!/scripts/
 
 /app/*
 !/app/*.cs
@@ -14,6 +16,7 @@
 !/app/Assistant/
 !/app/web/
 !/app/runtime/
+!/app/Remote/
 
 /app/Assistant/*
 !/app/Assistant/*.cs
@@ -24,24 +27,37 @@
 !/app/web/*.css
 !/app/web/*.html
 !/app/web/logo.png
+!/app/web/mobile/
+/app/web/mobile/*.apk
 
 /app/runtime/*
 !/app/runtime/codex/
+!/app/runtime/frp/
+/app/runtime/frp/*
+!/app/runtime/frp/bundled.json
 /app/runtime/codex/*
 !/app/runtime/codex/bundled.json
 
 /docs/*
 !/docs/usage.md
 !/docs/design.md
+!/docs/mobile.md
 !/docs/images/
 /docs/images/*
 !/docs/images/members.png
 !/docs/images/projects.png
+!/docs/images/mobile-members.png
+!/docs/images/mobile-gantt.png
 
 # Always exclude user records, credentials and generated output.
 **/[Dd]ata/
 **/bin/
 **/obj/
+**/build/
+**/.gradle/
+**/local.properties
+**/*.jks
+**/*.keystore
 **/.vs/
 **/.env
 **/.env.*

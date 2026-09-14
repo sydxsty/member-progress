@@ -3,7 +3,7 @@ using System.Text.Json.Nodes;
 namespace StudentProgress.Assistant;
 
 /// <summary>Independent chat and Codex lifecycle. Core business data is supplied only by delegates.</summary>
-public sealed class AssistantService : IDisposable
+public sealed partial class AssistantService : IDisposable
 {
     private readonly object sync = new();
     private readonly AssistantStore store;
@@ -118,11 +118,16 @@ public sealed class AssistantService : IDisposable
         clone.AutoUpdate=original.AutoUpdate;
         return clone;
     }
-    private async Task<JsonObject> ClearAsync()
+    private async Task<JsonObject> ClearAsync(JsonObject? mobileRequest = null)
     {
         Task? task;
         lock(sync)
         {
+            if (mobileRequest != null)
+            {
+                if (ReplayMobile(mobileRequest)) return MobileSnapshot();
+                CheckMobileVersion(mobileRequest);
+            }
             if(clearing)throw new InvalidOperationException("正在清空本次会话，请稍候。");
             clearing=true;
             currentRequest?.Cancel(); task=activeTask;
@@ -132,12 +137,16 @@ public sealed class AssistantService : IDisposable
             if(task!=null)await task.ConfigureAwait(false);
             lock(sync)
             {
-                if(state.Messages.Count>0)
+                if(state.Messages.Count>0 || mobileRequest != null)
                 {
                     var next=CopyState(state);
-                    next.ClearedMessages=next.Messages;
-                    next.ClearedError=next.Error;
+                    if (state.Messages.Count > 0)
+                    {
+                        next.ClearedMessages=next.Messages;
+                        next.ClearedError=next.Error;
+                    }
                     next.Messages=[]; next.Error="";next.Interrupted=false;
+                    AddMobileReceipt(next, mobileRequest);
                     store.SaveHistory(next); state=next;
                 }
             }
@@ -145,23 +154,34 @@ public sealed class AssistantService : IDisposable
         finally {lock(sync)clearing=false;Notify();}
         return Snapshot();
     }
-    private JsonObject UndoClear()
+    private JsonObject UndoClear(JsonObject? mobileRequest = null)
     {
         lock(sync)
         {
+            if (mobileRequest != null)
+            {
+                if (ReplayMobile(mobileRequest)) return MobileSnapshot();
+                CheckMobileVersion(mobileRequest);
+            }
             if(currentRequest!=null||clearing||state.Messages.Count!=0||state.ClearedMessages.Count==0)
                 throw new InvalidOperationException("当前没有可恢复的会话；发送新问题后无法撤销清空。");
             var next=CopyState(state);
             next.Messages=next.ClearedMessages;next.Error=next.ClearedError;
             next.ClearedMessages=[];next.ClearedError="";
+            AddMobileReceipt(next, mobileRequest);
             store.SaveHistory(next);state=next;
         }
         Notify();return Snapshot();
     }
-    private JsonObject StartRequest(JsonObject payload)
+    private JsonObject StartRequest(JsonObject payload, JsonObject? mobileRequest = null)
     {
         lock(sync)
         {
+            if (mobileRequest != null)
+            {
+                if (ReplayMobile(mobileRequest)) return MobileSnapshot();
+                CheckMobileVersion(mobileRequest, required: false);
+            }
             if(currentRequest!=null||clearing)throw new InvalidOperationException("正在回答或整理会话，可以等待或先停止。");
             if(maintenance)throw new InvalidOperationException("GPT 组件正在检查或更新，请稍后再发送。");
             string retryId=AssistantJson.Text(payload["retryMessageId"]);
@@ -208,6 +228,7 @@ public sealed class AssistantService : IDisposable
             var selection=new JsonObject{["includeReminders"]=user.IncludeReminders,["includeRecent"]=user.IncludeRecent,
                 ["references"]=System.Text.Json.JsonSerializer.SerializeToNode(user.References,AssistantJson.Options)};
             next.Error="";next.Interrupted=true;
+            AddMobileReceipt(next, mobileRequest);
             store.SaveHistory(next);state=next;
             currentRequest=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             var request=currentRequest;

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 using StudentProgress.Assistant;
+using StudentProgress.Remote;
 
 namespace StudentProgress;
 
@@ -14,6 +15,10 @@ public sealed class MainForm : Form
     private readonly AssistantService? _assistant;
     private string? _assistantError;
     private readonly Notifications _notifications;
+    private readonly MobileAccess? _mobileAccess;
+    private readonly MobileServer? _mobileServer;
+    private readonly FrpClient? _frp;
+    private string? _mobileError;
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 15000 };
@@ -41,6 +46,17 @@ public sealed class MainForm : Form
             _assistantError = "GPT 聊天模块暂时无法读取本机记录，原文件已保留；成员和任务功能可继续使用。";
         }
         _notifications = new Notifications(dataRoot);
+        try
+        {
+            _mobileAccess = new MobileAccess(dataRoot);
+            _mobileServer = new MobileServer(_service, _assistant, AppContext.BaseDirectory, _mobileAccess.Login, _mobileAccess.Authorize);
+            _frp = new FrpClient(dataRoot, AppContext.BaseDirectory);
+            _mobileAccess.Changed += OnMobileStateChanged;
+            _mobileServer.StateChanged += OnMobileStateChanged;
+            _frp.StateChanged += OnMobileStateChanged;
+            ApplyMobileConnection();
+        }
+        catch { _mobileError = "手机连接暂时无法启动，请检查连接设置；电脑功能可继续使用。"; }
         Controls.Add(_web);
 
         var menu = new ContextMenuStrip();
@@ -64,6 +80,9 @@ public sealed class MainForm : Form
         FormClosed += (_, _) =>
         {
             _timer.Stop(); _timer.Dispose(); _tray.Visible = false; _tray.Dispose();
+            if(_mobileAccess != null) _mobileAccess.Changed -= OnMobileStateChanged;
+            if(_mobileServer != null) { _mobileServer.StateChanged -= OnMobileStateChanged; _mobileServer.Dispose(); }
+            if(_frp != null) { _frp.StateChanged -= OnMobileStateChanged; _frp.Dispose(); }
             _service.StateChanged -= OnStateChanged;
             _notifications.StatusChanged -= OnStateChanged;
             if (_assistant != null) { _assistant.StateChanged -= OnAssistantStateChanged; _assistant.Dispose(); }
@@ -145,6 +164,7 @@ public sealed class MainForm : Form
                 if (_assistant == null) throw new InvalidOperationException(_assistantError ?? "GPT 聊天模块暂时不可用。");
                 result = await _assistant.HandleAsync(action, payload);
             }
+            else if (action.StartsWith("mobile.", StringComparison.Ordinal)) result = HandleMobileAction(action, payload);
             else if (action == "app.get") result = Snapshot();
             else if (action == "file.open")
             {
@@ -229,6 +249,60 @@ public sealed class MainForm : Form
         if (_assistantError != null) snapshot["error"] = _assistantError;
         Post(new JsonObject { ["type"] = "assistant", ["state"] = snapshot });
     }
+
+    private JsonObject MobileSnapshot()
+    {
+        var value = _mobileAccess?.Snapshot() ?? new JsonObject();
+        value["available"] = _mobileAccess != null;
+        value["running"] = _mobileServer?.IsRunning ?? false;
+        value["frpStatus"] = _frp?.Status ?? "未启用外网转发";
+        value["frpConnected"] = _frp?.Connected ?? false;
+        value["error"] = _mobileError ?? _mobileServer?.LastError ?? "";
+        var lan = new JsonArray();
+        try
+        {
+            foreach(var address in System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName()).Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && !System.Net.IPAddress.IsLoopback(a)))
+                lan.Add($"http://{address}:{_mobileAccess?.Configuration().ListenPort ?? 18761}");
+        }
+        catch { }
+        value["lanUrls"] = lan;
+        return value;
+    }
+
+    private JsonNode HandleMobileAction(string action, JsonObject payload)
+    {
+        if(_mobileAccess == null) throw new InvalidOperationException(_mobileError ?? "手机连接模块不可用。");
+        switch(action)
+        {
+            case "mobile.get": break;
+            case "mobile.save": _mobileAccess.SaveSettings(payload); ApplyMobileConnection(); break;
+            case "mobile.restart": ApplyMobileConnection(); break;
+            case "mobile.revoke": _mobileAccess.Revoke(payload["id"]?.GetValue<string>() ?? ""); break;
+            case "mobile.copy-address":
+                var address = payload["address"]?.GetValue<string>() ?? "";
+                if(address.Length > 0 && Uri.TryCreate(address, UriKind.Absolute, out var uri) && uri.Scheme == "http") Clipboard.SetText(address);
+                break;
+            default: throw new InvalidOperationException("不支持的手机连接操作。");
+        }
+        return MobileSnapshot();
+    }
+
+    private void ApplyMobileConnection()
+    {
+        _frp?.Stop(); _mobileServer?.Stop(); _mobileError = null;
+        if(_mobileAccess == null || _mobileServer == null) return;
+        var config = _mobileAccess.Configuration();
+        if(!config.Enabled) return;
+        try { _mobileServer.Start(config.ListenPort); if(_mobileServer.IsRunning) _frp?.Start(config); }
+        catch { _mobileError = "手机连接未启动，请检查本机端口是否已被使用。"; }
+    }
+
+    private void OnMobileStateChanged()
+    {
+        if(IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"] = "mobile", ["state"] = MobileSnapshot() }))); }
+        catch(InvalidOperationException) { }
+    }
     private void Post(JsonObject message)
     {
         if (!_ready || IsDisposed) return;
@@ -242,9 +316,8 @@ public sealed class MainForm : Form
         try
         {
             _service.RefreshStudentGrades();
-            if (!_notifications.CanSend()) return;
             var reminders = await _service.HandleAsync("reminder.poll", new JsonObject { ["now"] = DateTimeOffset.Now.ToString("O") });
-            if (reminders is JsonArray list)
+            if (_notifications.CanSend() && reminders is JsonArray list)
                 foreach (var item in list.OfType<JsonObject>())
                     _notifications.Show(item["title"]?.GetValue<string>() ?? "成员进度提醒",
                         item["scopeType"]?.GetValue<string>() ?? "global", item["scopeId"]?.GetValue<string>() ?? "", item["id"]?.GetValue<string>() ?? "");

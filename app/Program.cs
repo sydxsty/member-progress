@@ -23,6 +23,14 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--mobile-test"))
+        {
+            Environment.Exit(Remote.MobileChecks.Run(dataRoot)); return;
+        }
+        if (args.Contains("--mobile-serve-test"))
+        {
+            Environment.Exit(Remote.MobileTestHost.Run(dataRoot, args.Contains("--with-ai"))); return;
+        }
         if (args.Contains("--assistant-actions-test"))
         {
             Environment.Exit(Assistant.AssistantActionChecks.Run(dataRoot));return;
