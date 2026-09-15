@@ -39,7 +39,7 @@ public sealed partial class AppService
                 var entry=zip.CreateEntry("state.json",CompressionLevel.Optimal);
                 using(var writer=new StreamWriter(entry.Open(),new UTF8Encoding(false)))writer.Write(state.ToJsonString());
                 var names=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                foreach(var msg in Rows("messages"))foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())
+                foreach(var msg in AllArchiveMessages(state))foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())
                 {
                     var name=S(f,"storedName");if(!SafeStoredName(name)||!names.Add(name))continue;
                     var path=Path.Combine(root,"attachments",name);if(!File.Exists(path))throw new InvalidOperationException("有附件缺失，备份未完成。请保留当前 Data 文件夹。");
@@ -84,7 +84,7 @@ public sealed partial class AppService
                 }
             }
             var incoming=ParseState(File.ReadAllText(Path.Combine(stage,"state.json")));
-            foreach(var msg in ((JsonArray)incoming["messages"]!).OfType<JsonObject>())foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())
+            foreach(var msg in AllArchiveMessages(incoming))foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())
                 if(!File.Exists(Path.Combine(stage,"attachments",S(f,"storedName"))))throw new InvalidDataException("备份缺少附件，尚未恢复。");
             // Credentials and their destination remain the current user's settings, never archive-controlled.
             incoming["settings"]=state["settings"]!.DeepClone();incoming["status"]=state["status"]!.DeepClone();

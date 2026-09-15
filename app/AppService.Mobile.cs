@@ -35,6 +35,7 @@ public sealed partial class AppService
                 row["attachments"] = new JsonArray((message["attachments"] as JsonArray ?? new()).OfType<JsonObject>()
                     .Select(a => (JsonNode)AssistantFields(a, "id", "name", "mime", "size", "textStatus")).ToArray());
                 messages.Add(row);
+                versions["message:" + S(message, "id")] = MobileRecordVersion(message);
             }
             result["messages"] = messages;
             result["preferences"] = AssistantFields((JsonObject)state["preferences"]!, "recentStudentLabels", "recentGlobalAlarmLabels");
@@ -59,6 +60,7 @@ public sealed partial class AppService
         var requestId = S(request, "requestId");
         var fingerprint = MobileProtocol.Fingerprint(request);
         string? scheduleType = null, scheduleId = null;
+        (string Type, string Id)? changedArchiveScope = null;
         JsonObject result;
         lock (gate)
         {
@@ -76,6 +78,7 @@ public sealed partial class AppService
             {
                 "student.patch" => "students",
                 "task.update" or "task.delete" => "tasks",
+                "chat.delete" => "messages",
                 "alarm.save" when S(payload, "id").Length > 0 => "alarms",
                 "alarm.enabled" or "alarm.delete" or "alarm.skip" or "reminder.snooze" => "alarms",
                 _ => ""
@@ -104,6 +107,8 @@ public sealed partial class AppService
                     case "chat.send":
                         SendChat(payload); scheduleType = S(payload, "scopeType"); scheduleId = S(payload, "scopeId");
                         MarkPending(scheduleType, scheduleId); break;
+                    case "chat.delete": changedArchiveScope = DeleteArchiveMessage(Required(payload, "id")); break;
+                    case "chat.restore": changedArchiveScope = RestoreArchiveMessage(Required(payload, "id")); break;
                     case "summary.retry":
                         scheduleType = Required(payload, "scopeType"); scheduleId = Required(payload, "scopeId");
                         Scope(scheduleType, scheduleId); MarkPending(scheduleType, scheduleId); break;
@@ -128,6 +133,7 @@ public sealed partial class AppService
                 // The write and its replay marker are one atomic replacement.
                 Save();
                 if (action == "student.patch") CancelSummaryScope("student", Required(payload, "id"));
+                if (changedArchiveScope is {} archiveScope) CancelSummaryScope(archiveScope.Type, archiveScope.Id);
                 result = MobileSnapshot();
             }
             catch { state = previous; throw; }
@@ -154,7 +160,7 @@ public sealed partial class AppService
                 MobileProtocol.Only(p, "id", "done", "title", "start", "due", "tags");
                 MobileProtocol.StringFields(p, "id", "title", "start", "due");
                 MobileProtocol.BooleanFields(p, "done"); MobileProtocol.StringArray(p, "tags", 30); break;
-            case "task.delete": case "task.restore": case "alarm.delete":
+            case "task.delete": case "task.restore": case "alarm.delete": case "chat.delete": case "chat.restore":
                 MobileProtocol.Only(p, "id"); MobileProtocol.Required(p, "id"); break;
             case "chat.send":
                 MobileProtocol.Only(p, "scopeType", "scopeId", "text", "completeTaskId");

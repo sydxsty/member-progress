@@ -30,7 +30,9 @@
   let drawer = null, modal = null, inlineAdd = null, inlineEdit = null, uploading = false, dragDepth = 0, repainting = false;
   const drafts = new Map(), taskDrafts = new Map(), pending = new Map(), busy = new Set();
   let rpcId = 0, timelineGesture = null, studentGesture = null, suppressTimelineClickUntil = 0, suppressStudentClickUntil = 0, composing = false;
-  const DAY_WIDTH = 34;
+  const MIN_DAY_WIDTH = 24, MAX_DAY_WIDTH = 160;
+  let dayWidth = 34;
+  try {const saved=Number(localStorage.getItem('member-progress:gantt-day-width'));if(Number.isFinite(saved)&&saved>=MIN_DAY_WIDTH&&saved<=MAX_DAY_WIDTH)dayWidth=saved;} catch {}
   const todayKey = () => dateKey(new Date());
   function dateKey(d) { const a = new Date(d); return `${a.getFullYear()}-${String(a.getMonth()+1).padStart(2,'0')}-${String(a.getDate()).padStart(2,'0')}`; }
   function fromDate(s) { return new Date(`${s}T12:00:00`); }
@@ -76,10 +78,10 @@
     document.querySelectorAll('#toast-root .toast:not(.undo-toast)').forEach(node=>node.remove());
     const node=document.createElement('div');node.className=`toast${error?' error':''}`;node.textContent=message;$('#toast-root').append(node);setTimeout(()=>node.remove(),error?7000:3500);
   }
-  function undoToast(id) {
+  function undoToast(id,kind='task') {
     document.querySelectorAll('#toast-root .toast').forEach(node=>node.remove());
-    const node=document.createElement('div');node.className='toast undo-toast';node.append(document.createTextNode('任务已删除'));
-    const button=document.createElement('button');button.textContent='撤销';button.dataset.action='restore-task';button.dataset.id=id;node.append(button);$('#toast-root').append(node);setTimeout(()=>node.remove(),9000);
+    const node=document.createElement('div');node.className='toast undo-toast';node.append(document.createTextNode(kind==='message'?'对话已删除':'任务已删除'));
+    const button=document.createElement('button');button.textContent='撤销';button.dataset.action=kind==='message'?'restore-message':'restore-task';button.dataset.id=id;node.append(button);$('#toast-root').append(node);setTimeout(()=>node.remove(),9000);
   }
   function empty(iconName,title,body,action,label,compact=false) {return `<div class="empty-state${compact?' compact':''}"><div class="empty-icon">${icon(iconName)}</div><h2>${esc(title)}</h2><p>${esc(body)}</p>${action?`<button class="primary" data-action="${action}">${icon('plus')}${esc(label)}</button>`:''}</div>`;}
   function preserveUI(fn) {
@@ -89,7 +91,7 @@
     const modalTop=$('.modal-body')?.scrollTop,profileTop=$('.drawer-profile')?.scrollTop;
     repainting=true;try{fn();}finally{repainting=false;}
     fitBoard();
-    const b=$('.gantt-scroll');if(b&&scrollLeft!=null){b.scrollLeft=scrollLeft;b.scrollTop=scrollTop;}else if(b){b.scrollLeft=Math.max(0,(timelineRange().today-2)*DAY_WIDTH);}syncBoardRows();
+    const b=$('.gantt-scroll');if(b&&scrollLeft!=null){b.scrollLeft=scrollLeft;b.scrollTop=scrollTop;}else if(b){b.scrollLeft=Math.max(0,(timelineRange().today-2)*dayWidth);}syncBoardRows();
     if($('.page-content')&&pageTop!=null) $('.page-content').scrollTop=pageTop;
     if($('.modal-body')&&modalTop!=null)$('.modal-body').scrollTop=modalTop;
     if($('.drawer-profile')&&profileTop!=null)$('.drawer-profile').scrollTop=profileTop;
@@ -97,10 +99,42 @@
     if(focus){const target=document.querySelector(`[data-focus="${CSS.escape(focus)}"]`);if(target){target.focus({preventScroll:true});if(typeof selection==='number'&&target.setSelectionRange)try{target.setSelectionRange(selection,selectionEnd??selection);}catch{}}}
   }
   function render() { preserveUI(()=>{renderSidebar();renderMain();renderDrawer();renderModal();}); }
-  function fitBoard() {const board=$('.board'),gantt=$('.gantt-scroll');if(board){board.style.setProperty('--info',`${Math.max(220,Math.round(board.clientWidth*.62))}px`);if(gantt)board.style.setProperty('--gantt-scrollbar',`${Math.max(0,gantt.offsetHeight-gantt.clientHeight)}px`);}}
+  function fitBoard() {
+    const board=$('.board'),gantt=$('.gantt-scroll');if(!board)return;
+    board.style.setProperty('--info',`${Math.max(220,Math.round(board.clientWidth*.62))}px`);
+    board.style.setProperty('--day',`${dayWidth}px`);board.classList.toggle('wide-days',dayWidth>=80);
+    if(gantt)board.style.setProperty('--gantt-scrollbar',`${Math.max(0,gantt.offsetHeight-gantt.clientHeight)}px`);
+    alignMemberColumns(board);
+  }
+  function alignMemberColumns(board) {
+    const heading=board.querySelector('.student-heading');if(!heading)return;
+    const available=heading.clientWidth,measure=document.createElement('canvas').getContext('2d');
+    function textWidth(node,text) {const style=getComputedStyle(node);measure.font=`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;return measure.measureText(text).width;}
+    let name=0,grade=20,meta=18;
+    board.querySelectorAll('.student-heading').forEach(row=>{
+      const n=row.querySelector('.student-name'),g=row.querySelector('.inline-grade .field-display'),tags=row.querySelectorAll('.inline-tags .tag'),more=row.querySelector('.meta-more');
+      name=Math.max(name,textWidth(n,n.textContent)+2);
+      if(g)grade=Math.max(grade,textWidth(g,g.textContent)+6);
+      meta=Math.max(meta,Array.from(tags).reduce((sum,t)=>sum+Math.min(65,textWidth(t,t.textContent)+8)+4,0)+(more?textWidth(more,more.textContent)+4:0)+21);
+    });
+    name=Math.ceil(Math.min(name,Math.max(42,Math.min(110,available*.18))));
+    grade=Math.ceil(Math.min(grade,Math.max(24,Math.min(65,available*.11))));
+    meta=Math.ceil(Math.min(meta,Math.max(18,Math.min(126,available*.45-name-grade))));
+    board.style.setProperty('--member-name',`${name}px`);board.style.setProperty('--member-grade',`${grade}px`);board.style.setProperty('--member-meta',`${meta}px`);
+  }
+  function zoomTimeline(e,gantt) {
+    e.preventDefault();if(timelineGesture||studentGesture)return;
+    const delta=e.deltaY*(e.deltaMode===1?20:e.deltaMode===2?gantt.clientWidth:1);
+    const next=Math.max(MIN_DAY_WIDTH,Math.min(MAX_DAY_WIDTH,Math.round(dayWidth*Math.exp(-Math.max(-240,Math.min(240,delta))*.0025)*10)/10));
+    if(next===dayWidth)return;
+    const x=Math.max(0,Math.min(gantt.clientWidth,e.clientX-gantt.getBoundingClientRect().left)),anchor=(gantt.scrollLeft+x)/dayWidth;
+    dayWidth=next;const board=gantt.closest('.board');board.style.setProperty('--day',`${dayWidth}px`);board.classList.toggle('wide-days',dayWidth>=80);
+    gantt.scrollLeft=anchor*dayWidth-x;
+    try {localStorage.setItem('member-progress:gantt-day-width',String(dayWidth));} catch {}
+  }
   function syncBoardRows() {const list=$('.student-list'),gantt=$('.gantt-scroll');if(list&&gantt)list.scrollTop=gantt.scrollTop;}
   document.addEventListener('scroll',e=>{if(e.target.matches?.('.gantt-scroll'))syncBoardRows();},true);
-  document.addEventListener('wheel',e=>{const strip=e.target.closest('.student-project-strip');if(strip&&strip.scrollWidth>strip.clientWidth){e.preventDefault();strip.scrollLeft+=(Math.abs(e.deltaX)>Math.abs(e.deltaY)?e.deltaX:e.deltaY)*(e.deltaMode===1?20:e.deltaMode===2?strip.clientWidth:1);return;}if(!e.target.closest('.student-fixed'))return;const gantt=$('.gantt-scroll');if(gantt&&gantt.scrollHeight>gantt.clientHeight){e.preventDefault();gantt.scrollTop+=e.deltaY*(e.deltaMode===1?20:e.deltaMode===2?gantt.clientHeight:1);syncBoardRows();}},{passive:false});
+  document.addEventListener('wheel',e=>{if(e.ctrlKey){const gantt=e.target.closest('.gantt-scroll');if(gantt)zoomTimeline(e,gantt);return;}const strip=e.target.closest('.student-project-strip');if(strip&&strip.scrollWidth>strip.clientWidth){e.preventDefault();strip.scrollLeft+=(Math.abs(e.deltaX)>Math.abs(e.deltaY)?e.deltaX:e.deltaY)*(e.deltaMode===1?20:e.deltaMode===2?strip.clientWidth:1);return;}if(!e.target.closest('.student-fixed'))return;const gantt=$('.gantt-scroll');if(gantt&&gantt.scrollHeight>gantt.clientHeight){e.preventDefault();gantt.scrollTop+=e.deltaY*(e.deltaMode===1?20:e.deltaMode===2?gantt.clientHeight:1);syncBoardRows();}},{passive:false});
   new ResizeObserver(fitBoard).observe($('#main'));
   function renderSidebar() {
     $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark"><img src="logo.png" alt="" width="31" height="31"></span><span class="brand-label">成员进度</span></div><nav class="navigation">${[['students','users','成员'],['projects','folder','项目'],['archive','archive','归档'],['assistant','spark','GPT 聊天']].map(([v,i,l])=>`<button class="nav-button${view===v?' active':''}" data-action="view" data-view="${v}" ${view===v?'aria-current="page"':''} title="${l}">${icon(i)}<span class="nav-label">${l}</span></button>`).join('')}</nav><div class="sidebar-footer"><button class="nav-button" data-action="settings" title="设置">${icon('settings')}<span class="nav-label">设置</span></button><div class="local-status"><span class="status-dot"></span>资料保存在本机</div>${native?'':'<div class="preview-note">浏览器预览 · 刷新即重置</div>'}</div>`;
@@ -114,7 +148,7 @@
     else if(view==='assistant') window.AssistantChat.mount($('#main'));
     else renderArchives();
   }
-  function showView(next) {view=next;search='';inlineAdd=null;renderSidebar();renderMain();fitBoard();const board=$('.gantt-scroll');if(board)board.scrollLeft=Math.max(0,(timelineRange().today-2)*DAY_WIDTH);}
+  function showView(next) {view=next;search='';inlineAdd=null;renderSidebar();renderMain();fitBoard();const board=$('.gantt-scroll');if(board)board.scrollLeft=Math.max(0,(timelineRange().today-2)*dayWidth);}
   function studentMatches(s) {const q=search.trim().toLowerCase();return !q||[s.name,s.grade,s.bio,s.currentSummary,...s.tags||[],...scopeTasks('student',s.id).map(t=>t.title)].join(' ').toLowerCase().includes(q);}
   function editable(s,field,location,options={}) {
     const value=field==='tags'?(s.tags||[]).join('; '):String(s[field]||''),display=options.display??value;
@@ -174,7 +208,7 @@
   function renderStudents() {
     const students=db.students.filter(studentMatches),range=timelineRange(),layouts=new Map(students.map(s=>[s.id,studentLayout(s,range)]));
     const dates=Array.from({length:range.days},(_,i)=>{const d=addDays(range.start,i),n=fromDate(d);return `<button class="date-cell${d===todayKey()?' today':''}${[0,6].includes(n.getDay())?' weekend':''}" data-action="date-alarm" data-date="${d}" title="${d} · 点击添加全局提醒"><strong>${n.getDate()===1?`${n.getMonth()+1}/1`:n.getDate()}</strong>${['日','一','二','三','四','五','六'][n.getDay()]}</button>`;}).join('');
-    $('#main').innerHTML=header('成员','',db.students.length,`<button class="primary" data-action="new-student">${icon('plus')}成员</button>`)+`<div class="page-content students-page">${db.students.length===0?empty('users','从第一位成员开始','只需一个姓名。','new-student','添加成员'):students.length===0?'<div class="no-results">没有找到匹配的成员。</div>':`<div class="board-controls"><span>${fromDate(todayKey()).toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'})}</span><div class="board-controls-right"><span class="today-dot">今天</span><button class="small ghost" data-action="today">回到今天</button></div></div><div class="board" style="--days:${range.days};--today:${range.today}"><div class="student-fixed"><div class="board-header-label" title="拖动左侧圆点排序；点击姓名打开归档；其他文字点击编辑">成员 / 当前进展</div><div class="student-list">${students.map(s=>studentRow(s,layouts.get(s.id))).join('')}</div></div><div class="gantt-scroll" aria-label="任务日期时间线"><div class="gantt-inner"><div class="date-header">${dates}</div>${students.map(s=>timelineRow(s,range,layouts.get(s.id))).join('')}</div></div></div>`}</div>`;
+    $('#main').innerHTML=header('成员','',db.students.length,`<button class="primary" data-action="new-student">${icon('plus')}成员</button>`)+`<div class="page-content students-page">${db.students.length===0?empty('users','从第一位成员开始','只需一个姓名。','new-student','添加成员'):students.length===0?'<div class="no-results">没有找到匹配的成员。</div>':`<div class="board-controls"><span>${fromDate(todayKey()).toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'})}</span><div class="board-controls-right"><span class="today-dot">今天</span><button class="small ghost" data-action="today">回到今天</button></div></div><div class="board" style="--days:${range.days};--today:${range.today};--day:${dayWidth}px"><div class="student-fixed"><div class="board-header-label" title="拖动左侧圆点排序；点击姓名打开归档；其他文字点击编辑">成员 / 当前进展</div><div class="student-list">${students.map(s=>studentRow(s,layouts.get(s.id))).join('')}</div></div><div class="gantt-scroll" aria-label="任务日期时间线" title="Ctrl + 鼠标滚轮调整日期宽度"><div class="gantt-inner"><div class="date-header">${dates}</div>${students.map(s=>timelineRow(s,range,layouts.get(s.id))).join('')}</div></div></div>`}</div>`;
   }
   function studentRow(s,layout) {
     const tasks=scopeTasks('student',s.id),active=tasks.filter(t=>!t.done),undated=tasks.filter(t=>!t.start&&!t.due);
@@ -234,15 +268,15 @@
       const bubbles=messages.map(m=>{const date=dateKey(m.createdAt),sep=date!==lastDate?`<div class="chat-date">${fromDate(date).toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'long'})}</div>`:'';lastDate=date;return sep+messageBubble(m);}).join('');
       const status=s.summaryStatus;
       const statusHtml=archived?'':['pending','running'].includes(status)?`<div class="summary-state"><span class="spinner"></span>${status==='pending'?'稍后自动整理本次进展…':'GPT 正在整理摘要…'}</div>`:status==='error'?`<div class="summary-state error"><span>${esc(s.summaryError||'摘要未生成，原始记录已保存。')}</span><button class="text-button" data-action="retry-summary">重试</button></div>`:!db.settings.aiConfigured?'<div class="summary-state"><span>记录保存在本机。连接 GPT 后，发送内容会自动生成摘要。</span><button class="text-button" data-action="settings">连接 GPT</button></div>':'';
-      content=`<div class="chat-messages">${messages.length?bubbles:`<div class="chat-intro"><div class="intro-icon">${icon('chat')}</div><strong>像发消息一样记录进展</strong>发一段文字，或拖入文件。<br>GPT 自动整理摘要，并提取下一步任务。</div>`}${statusHtml}</div>${archived?'<div class="archived-notice">已删除 · 历史记录只读</div>':`<div class="composer">${t&&!t.done?`<div class="task-context">${icon('archive')}<strong>${esc(t.title)}</strong><span>发送后完成</span><button class="icon-button" data-action="clear-task-context" title="仅归档，不完成任务">${icon('close')}</button></div>`:''}<div class="composer-top"><button data-action="pick-files">${icon('clip')}添加文件</button><span>${uploading?'正在读取附件…':'支持拖入文件 / 粘贴图片'}</span></div><input class="file-input" id="chat-files" type="file" multiple><div class="composer-files">${d.files.map((f,i)=>`<div class="draft-file">${icon('file')}<span>${esc(f.name)}</span><button data-action="remove-file" data-index="${i}" title="移除附件">${icon('close')}</button></div>`).join('')}</div><textarea id="chat-input" data-focus="chat-input" data-input="chat" placeholder="记下进展、反馈或下一步…" rows="2" aria-label="归档消息" ${sending?'disabled':''}>${esc(d.text)}</textarea><div class="composer-footer"><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="primary" data-action="send-chat" ${sending||uploading||(!d.text.trim()&&!d.files.length)?'disabled':''}>${icon('send')}${sending?'保存中…':t&&!t.done?'提交并完成':'发送归档'}</button></div></div>`}`;
+      content=`<div class="chat-messages">${messages.length?bubbles:`<div class="chat-intro"><div class="intro-icon">${icon('chat')}</div><strong>像发消息一样记录进展</strong>发一段文字，或拖入文件。<br>GPT 自动整理摘要，并提取下一步任务。</div>`}${statusHtml}</div>${archived?'<div class="archived-notice">成员已删除 · 历史对话仍可整理</div>':`<div class="composer">${t&&!t.done?`<div class="task-context">${icon('archive')}<strong>${esc(t.title)}</strong><span>发送后完成</span><button class="icon-button" data-action="clear-task-context" title="仅归档，不完成任务">${icon('close')}</button></div>`:''}<div class="composer-top"><button data-action="pick-files">${icon('clip')}添加文件</button><span>${uploading?'正在读取附件…':'支持拖入文件 / 粘贴图片'}</span></div><input class="file-input" id="chat-files" type="file" multiple><div class="composer-files">${d.files.map((f,i)=>`<div class="draft-file">${icon('file')}<span>${esc(f.name)}</span><button data-action="remove-file" data-index="${i}" title="移除附件">${icon('close')}</button></div>`).join('')}</div><textarea id="chat-input" data-focus="chat-input" data-input="chat" placeholder="记下进展、反馈或下一步…" rows="2" aria-label="归档消息" ${sending?'disabled':''}>${esc(d.text)}</textarea><div class="composer-footer"><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="primary" data-action="send-chat" ${sending||uploading||(!d.text.trim()&&!d.files.length)?'disabled':''}>${icon('send')}${sending?'保存中…':t&&!t.done?'提交并完成':'发送归档'}</button></div></div>`}`;
     }
     $('#drawer-root').innerHTML=`<div class="drawer-backdrop" data-action="close-drawer"></div><aside class="drawer" role="dialog" aria-modal="true" aria-label="${attr(s.name)}归档">${head}${content}${dragDepth>0?'<div class="drop-overlay">松开鼠标，添加到这条记录</div>':''}</aside>`;
   }
-  function fileStatus(a) {const s=a.textStatus||'';if(/unsupported|not.supported|不支持|仅归档/i.test(s))return '已归档 · 此格式不参与摘要';if(/fail|error|失败|无法|no.text|empty|无文字|无可提取/i.test(s))return '已归档 · 未提取到文字';if(/extract|read|success|ok|已读取|已提取/i.test(s))return '已读取文字';return s||'已归档';}
+  function fileStatus(a) {return '原文件已归档';}
   function fileSize(n) {return n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${Math.ceil(n/1024)} KB`:`${n||0} B`;}
   function messageBubble(m) {
     const user=m.role==='user', suggestions=isArchived(drawer.type,drawer.id)?[]:m.suggestions||[];
-    return `<div class="chat-message ${user?'user':'assistant'}"><div class="chat-avatar">${user?'我':icon('spark')}</div><div class="bubble-wrap"><div class="bubble-meta"><span>${user?'我':'GPT · 自动摘要'}</span><time>${humanTime(m.createdAt)}</time></div><div class="chat-bubble">${esc(m.text)}${(m.attachments||[]).map(a=>`<button class="attachment-card" data-action="open-file" data-id="${attr(a.id)}"><span class="attachment-icon">${icon('file')}</span><span class="attachment-info"><strong>${esc(a.name)}</strong><small>${fileSize(a.size)} · ${esc(fileStatus(a))}</small></span></button>`).join('')}${suggestions.length?`<div class="suggestion-label">下一步 · 点击加入任务</div><div class="suggestions">${suggestions.map((s,i)=>{const exists=scopeTasks(drawer.type,drawer.id).some(t=>t.title===s.title);return `<button class="suggestion-chip" data-action="add-suggestion" data-message-id="${attr(m.id)}" data-index="${i}" ${exists?'disabled':''}>${icon(exists?'check':'plus')}${esc(s.title)}${exists?' · 已加入':''}</button>`;}).join('')}</div>`:''}</div></div></div>`;
+    return `<div class="chat-message ${user?'user':'assistant'}" data-message-id="${attr(m.id)}"><div class="chat-avatar">${user?'我':icon('spark')}</div><div class="bubble-wrap"><div class="bubble-meta"><span>${user?'我':'GPT · 自动摘要'}</span><time>${humanTime(m.createdAt)}</time><button class="message-delete" data-action="delete-message" data-id="${attr(m.id)}" title="删除这条对话，可撤销" aria-label="删除${user?'我的归档':'GPT 摘要'}">${icon('trash')}</button></div><div class="chat-bubble">${esc(m.text)}${(m.attachments||[]).map(a=>`<button class="attachment-card" data-action="open-file" data-id="${attr(a.id)}"><span class="attachment-icon">${icon('file')}</span><span class="attachment-info"><strong>${esc(a.name)}</strong><small>${fileSize(a.size)} · ${esc(fileStatus(a))}</small></span></button>`).join('')}${suggestions.length?`<div class="suggestion-label">下一步 · 点击加入任务</div><div class="suggestions">${suggestions.map((s,i)=>{const exists=scopeTasks(drawer.type,drawer.id).some(t=>t.title===s.title);return `<button class="suggestion-chip" data-action="add-suggestion" data-message-id="${attr(m.id)}" data-index="${i}" ${exists?'disabled':''}>${icon(exists?'check':'plus')}${esc(s.title)}${exists?' · 已加入':''}</button>`;}).join('')}</div>`:''}</div></div></div>`;
   }
   function inputField(label,name,value,placeholder='',type='text',required=false) {return `<div class="form-field"><label for="field-${name}">${label}</label><input id="field-${name}" name="${name}" data-modal-field="${name}" data-focus="modal-${name}" type="${type}" value="${attr(value)}" placeholder="${attr(placeholder)}" ${required?'required':''}></div>`;}
   function openStudent(id) {if(id&&isArchived('student',id))return;const s=context('student',id);modal={type:'student',values:{id:s?.id,name:s?.name||'',grade:s?.grade||'',tags:(s?.tags||[]).join('; '),bio:s?.bio||'',detailsOpen:!!s}};renderModal();setTimeout(()=>$('#field-name')?.focus(),0);}
@@ -406,7 +440,7 @@
   document.addEventListener('pointercancel',e=>{if(studentGesture?.pointerId===e.pointerId)finishStudentGesture(true);});
   window.addEventListener('blur',()=>{if(studentGesture)finishStudentGesture(true);});
   function pointerDay(timeline,clientX) {
-    return Math.max(0,Math.min(Number(timeline.dataset.rangeDays)-1,Math.floor((clientX-timeline.getBoundingClientRect().left)/DAY_WIDTH)));
+    return Math.max(0,Math.min(Number(timeline.dataset.rangeDays)-1,Math.floor((clientX-timeline.getBoundingClientRect().left)/dayWidth)));
   }
   function finishGesture(cancel=false) {
     const g=timelineGesture;if(!g)return;
@@ -495,7 +529,7 @@
     if(a==='close-modal'||a==='modal-backdrop'){modal=null;renderModal();return;}
     if(a==='edit-task'){openTask(id);return;}
     if(a==='inline-task'){inlineAdd=scopeKey(st,si);preserveUI(renderMain);document.querySelector(`[data-focus="${CSS.escape(`task-add-${inlineAdd}`)}"]`)?.focus();return;}
-    if(a==='today'){const b=$('.gantt-scroll');if(b)b.scrollTo({left:Math.max(0,(timelineRange().today-2)*DAY_WIDTH),behavior:'smooth'});return;}
+    if(a==='today'){const b=$('.gantt-scroll');if(b)b.scrollTo({left:Math.max(0,(timelineRange().today-2)*dayWidth),behavior:'smooth'});return;}
     if(a==='date-alarm'){openAlarms(null,el.dataset.date);return;}
     if(a==='timeline-date'){openAlarms(el.dataset.studentId,el.dataset.date);return;}
     if(a==='student-alarm'){openAlarms(id);return;}
@@ -517,6 +551,8 @@
       if(a==='toggle-task'){await rpc('task.toggle',{id});}
       else if(a==='delete-task'){await rpc('task.delete',{id});if(modal?.type==='task'&&modal.values.id===id){modal=null;renderModal();}undoToast(id);}
       else if(a==='restore-task'){await rpc('task.restore',{id});el.closest('.toast')?.remove();toast('任务已恢复');}
+      else if(a==='delete-message'){await rpc('chat.delete',{id});undoToast(id,'message');}
+      else if(a==='restore-message'){await rpc('chat.restore',{id});el.closest('.toast')?.remove();toast('对话已恢复');}
       else if(a==='confirm-delete-student'){await rpc('student.delete',{id});drafts.delete(scopeKey('student',id));taskDrafts.delete(scopeKey('student',id));modal=null;if(drawer?.id===id)drawer.tab='archive';render();toast('成员已删除，历史归档保留');}
       else if(a==='retry-summary'&&drawer){await rpc('summary.retry',{scopeType:drawer.type,scopeId:drawer.id});}
       else if(a==='add-suggestion'&&drawer){const m=db.messages.find(m=>m.id===el.dataset.messageId),s=m?.suggestions?.[Number(el.dataset.index)];if(s){await rpc('task.add',{title:s.title,scopeType:drawer.type,scopeId:drawer.id});toast('已加入任务');}}

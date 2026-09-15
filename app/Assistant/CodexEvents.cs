@@ -4,11 +4,14 @@ namespace StudentProgress.Assistant;
 
 internal sealed class CodexEvents
 {
+    readonly bool allowArchiveTools;
+    internal CodexEvents(bool allowArchiveTools = false) { this.allowArchiveTools = allowArchiveTools; }
     internal string Answer { get; private set; } = "";
     internal string Error { get; private set; } = "";
     internal bool Completed { get; private set; }
     internal bool Failed { get; private set; }
     internal bool UnexpectedTool { get; private set; }
+    internal int ArchiveToolCalls { get; private set; }
     internal void Accept(string line)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
@@ -21,8 +24,12 @@ internal sealed class CodexEvents
         {
             var content = item["item"] as JsonObject;
             string itemType = AssistantJson.Text(content?["type"]);
-            if (itemType is "command_execution" or "mcp_tool_call" or "web_search" or "file_change" or "collab_tool_call")
-                UnexpectedTool = true;
+            if (itemType is "mcp_tool_call" or "web_search" or "collab_tool_call") UnexpectedTool = true;
+            if (itemType is "command_execution" or "file_change")
+            {
+                if (!allowArchiveTools) UnexpectedTool = true;
+                else if (type == "item.completed") ArchiveToolCalls++;
+            }
             if (type == "item.completed" && itemType == "agent_message")
             {
                 var text = AssistantJson.Text(content?["text"]);

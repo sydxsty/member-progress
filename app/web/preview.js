@@ -8,7 +8,7 @@
     settings: {baseUrl:'', model:'', apiMode:'responses', aiConfigured:false, dataRoot:'浏览器预览：仅保存在本页内存中，刷新后清空'},
     status: {notificationStatus:'浏览器预览不发送 Windows 通知；请在桌面应用中使用提醒。'}
   };
-  const deletedTasks = new Map();
+  const deletedTasks = new Map(), deletedMessages = new Map();
   function remember(key,labels,max) {state.preferences[key]=[...new Set([...labels.map(s=>String(s).trim()).filter(Boolean),...state.preferences[key]])].slice(0,max);}
   const clone = value => structuredClone(value);
   const id = () => window.crypto?.randomUUID?.() || `preview-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -79,6 +79,17 @@
           state.messages.push({id:id(),scopeType:p.scopeType,scopeId:p.scopeId,role:'user',text:p.text||'',createdAt:new Date().toISOString(),attachments:files.map((f,i)=>({id:id(),name:f.name,mime:f.mime,size:sizes[i],textStatus:'浏览器预览 · 未读取文字'})),suggestions:[]});
           if(task)task.done=true;
           break;
+        }
+        case 'chat.delete': {
+          const message=find(state.messages,p.id,'对话');
+          deletedMessages.set(p.id,clone(message));state.messages=state.messages.filter(m=>m.id!==p.id);
+          const record=(message.scopeType==='project'?state.projects:[...state.students,...state.archivedStudents]).find(x=>x.id===message.scopeId);
+          if(record){record.summaryStatus='idle';record.summaryError='';if(message.role==='assistant'&&record.currentSummary===message.text)record.currentSummary=state.messages.filter(m=>m.scopeType===message.scopeType&&m.scopeId===message.scopeId&&m.role==='assistant').at(-1)?.text||'';}
+          break;
+        }
+        case 'chat.restore': {
+          const message=deletedMessages.get(p.id);if(!message)throw new Error('找不到已删除的对话。');
+          state.messages.push(clone(message));state.messages.sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));deletedMessages.delete(p.id);break;
         }
         case 'summary.retry': {const s=scope(p);s.summaryStatus='error';s.summaryError='浏览器预览不调用 GPT；请在桌面应用中生成摘要。';break;}
         case 'alarm.save': {

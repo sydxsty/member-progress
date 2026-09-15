@@ -23,6 +23,18 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if(args.Contains("--archive-test"))
+        {
+            Environment.Exit(ArchiveChecks.Run(dataRoot));return;
+        }
+        if(args.Contains("--archive-agent-test"))
+        {
+            Environment.Exit(Assistant.ArchiveAgentChecks.Run(dataRoot));return;
+        }
+        if(args.Contains("--archive-document-live-test"))
+        {
+            Environment.Exit(ArchiveDocumentLiveCheck.Run(dataRoot,Argument(args,"--source-document")??"",Argument(args,"--source-image")));return;
+        }
         if (args.Contains("--recurring-reminder-test"))
         {
             Environment.Exit(Remote.RecurringReminderChecks.Run(dataRoot));return;

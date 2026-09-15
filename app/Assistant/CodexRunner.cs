@@ -8,7 +8,8 @@ namespace StudentProgress.Assistant;
 internal sealed class CodexRunner
 {
     internal const string KeyEnvironmentName = "STUDENT_PROGRESS_CODEX_KEY";
-    internal static ProcessStartInfo CreateStartInfo(string executable, string workRoot, JsonObject connection)
+    internal int LastArchiveToolCalls { get; private set; }
+    internal static ProcessStartInfo CreateStartInfo(string executable, string workRoot, JsonObject connection, bool archiveMode = false)
     {
         string model = AssistantJson.Text(connection["model"]);
         string key = AssistantJson.Text(connection["key"]);
@@ -33,10 +34,14 @@ internal sealed class CodexRunner
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
-        foreach (string arg in new[] { "-a", "never", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--color", "never" })
+        foreach (string arg in new[] { "-a", "never", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--sandbox", archiveMode ? "workspace-write" : "read-only", "--color", "never" })
             start.ArgumentList.Add(arg);
-        // These feature names were verified against the bundled 0.154.0 executable.
-        foreach (string feature in new[] { "shell_tool", "unified_exec", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use", "image_generation", "memories", "skill_search", "skill_mcp_dependency_install", "code_mode", "code_mode_host", "view_image", "sleep_tool", "workspace_dependencies", "in_app_local_automation", "goals" })
+        // Archive sessions keep the CLI's native execution, image, planning and code-mode host defaults.
+        // Generic chat retains its original tool-free boundary.
+        string[] disabledFeatures = archiveMode
+            ? ["multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use", "image_generation", "memories", "skill_search", "skill_mcp_dependency_install", "sleep_tool", "in_app_local_automation", "goals"]
+            : ["shell_tool", "unified_exec", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use", "image_generation", "memories", "skill_search", "skill_mcp_dependency_install", "code_mode", "code_mode_host", "view_image", "sleep_tool", "workspace_dependencies", "in_app_local_automation", "goals"];
+        foreach (string feature in disabledFeatures)
         {
             start.ArgumentList.Add("--disable");
             start.ArgumentList.Add(feature);
@@ -49,7 +54,8 @@ internal sealed class CodexRunner
         Config("model_providers.student_progress={name=\"Student Progress\",base_url=" + Quote(baseUrl) + ",wire_api=\"responses\",env_key=\"" + KeyEnvironmentName + "\",requires_openai_auth=false,request_max_retries=1,stream_max_retries=1,stream_idle_timeout_ms=120000}");
         Config("web_search=\"disabled\"");
         Config("project_doc_max_bytes=0");
-        Config("shell_environment_policy.inherit=\"none\"");
+        Config(archiveMode ? "shell_environment_policy.inherit=\"core\"" : "shell_environment_policy.inherit=\"none\"");
+        if (archiveMode) Config("windows.sandbox=\"unelevated\"");
         if (model.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase) || model.StartsWith("gpt-6", StringComparison.OrdinalIgnoreCase))
             Config("model_reasoning_effort=\"low\"");
         Config("model_verbosity=\"low\"");
@@ -62,12 +68,19 @@ internal sealed class CodexRunner
         return start;
     }
 
-    internal async Task<string> RunAsync(string executable, string workRoot, JsonObject connection, string prompt, CancellationToken cancellation)
+    internal Task<string> RunAsync(string executable, string workRoot, JsonObject connection, string prompt, CancellationToken cancellation)
+        => RunCoreAsync(executable, workRoot, connection, prompt, false, cancellation);
+
+    internal Task<string> RunArchiveAsync(string executable, string workRoot, JsonObject connection, string prompt, CancellationToken cancellation)
+        => RunCoreAsync(executable, workRoot, connection, prompt, true, cancellation);
+
+    async Task<string> RunCoreAsync(string executable, string workRoot, JsonObject connection, string prompt, bool archiveMode, CancellationToken cancellation)
     {
+        LastArchiveToolCalls = 0;
         if (!File.Exists(executable)) throw new InvalidOperationException("内置 GPT 组件缺失，请在设置中检查组件或重新解压应用。");
         Directory.CreateDirectory(workRoot);
-        var start = CreateStartInfo(executable, workRoot, connection);
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+        var start = CreateStartInfo(executable, workRoot, connection, archiveMode);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(archiveMode ? 12 : 4));
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation, timeout.Token);
         using var process = new Process { StartInfo = start };
         bool started = false;
@@ -76,12 +89,13 @@ internal sealed class CodexRunner
             started = process.Start();
             if (!started) throw new InvalidOperationException("GPT 组件暂时无法启动。");
             using var stopRegistration = linked.Token.Register(() => Stop(process));
-            var parser = new CodexEvents();
+            var parser = new CodexEvents(allowArchiveTools: archiveMode);
             var stdout = ReadEventsAsync(process.StandardOutput, parser, () => Stop(process), linked.Token);
             var stderr = ReadDiagnosticsAsync(process.StandardError, linked.Token);
             await process.StandardInput.WriteAsync(prompt.AsMemory(), linked.Token).ConfigureAwait(false);
             process.StandardInput.Close();
             await Task.WhenAll(stdout, stderr, process.WaitForExitAsync(linked.Token)).ConfigureAwait(false);
+            LastArchiveToolCalls = parser.ArchiveToolCalls;
             if (parser.UnexpectedTool) throw new InvalidOperationException("本次回答尝试使用资料范围外的工具，已停止。请只询问当前成员、任务和归档。");
             if (process.ExitCode != 0 || parser.Failed)
                 throw new InvalidOperationException(FriendlyError(parser.Error + "\n" + stderr.Result, process.ExitCode));
@@ -93,7 +107,7 @@ internal sealed class CodexRunner
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         { throw new OperationCanceledException("回答已取消，问题已保留。", cancellation); }
         catch (OperationCanceledException)
-        { throw new TimeoutException("回答超时，问题已保留。请减少引用资料后重试。"); }
+        { throw new TimeoutException(archiveMode ? "归档分析超时，原文件已保留，可重新生成摘要。" : "回答超时，问题已保留。请减少引用资料后重试。"); }
         catch (System.ComponentModel.Win32Exception)
         { throw new InvalidOperationException("GPT 组件无法启动，请检查组件更新或重新解压应用。"); }
         finally { if (started) Stop(process); }

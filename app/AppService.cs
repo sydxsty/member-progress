@@ -41,7 +41,7 @@ public sealed partial class AppService : IDisposable
         ["schemaVersion"] = 1,
         ["students"] = new JsonArray(), ["projects"] = new JsonArray(), ["tasks"] = new JsonArray(),
         ["archivedStudents"] = new JsonArray(), ["deletedTasks"] = new JsonArray(),
-        ["messages"] = new JsonArray(), ["alarms"] = new JsonArray(),
+        ["messages"] = new JsonArray(), ["deletedMessages"] = new JsonArray(), ["alarms"] = new JsonArray(),
         ["preferences"] = new JsonObject { ["recentStudentLabels"]=new JsonArray(), ["recentGlobalAlarmLabels"]=new JsonArray() },
         ["settings"] = new JsonObject { ["baseUrl"]="https://api.openai.com/v1", ["model"]="", ["apiMode"]="responses" },
         ["status"] = new JsonObject { ["notificationStatus"]="等待 Windows 通知服务初始化" }
@@ -83,7 +83,7 @@ public sealed partial class AppService : IDisposable
         if(s["mobileMutationReceipts"] is JsonNode mobileReceipts &&
             (mobileReceipts is not JsonArray mobileItems || mobileItems.Any(x=>x is not JsonObject r||S(r,"requestId").Length==0||S(r,"fingerprint").Length!=64)))
             throw new InvalidDataException("手机修改的保存记录格式无效。");
-        foreach (var key in new[]{"archivedStudents","deletedTasks"})
+        foreach (var key in new[]{"archivedStudents","deletedTasks","deletedMessages"})
         {
             s[key] ??= new JsonArray();
             if (s[key] is not JsonArray a || a.Any(x=>x is not JsonObject)) throw new InvalidDataException("备份包含无效的历史列表。");
@@ -100,7 +100,9 @@ public sealed partial class AppService : IDisposable
         s["settings"] ??= EmptyState()["settings"]!.DeepClone();
         s["status"] ??= EmptyState()["status"]!.DeepClone();
         if(s["settings"] is not JsonObject || s["status"] is not JsonObject) throw new InvalidDataException("配置格式无效。");
-        foreach(var msg in ((JsonArray)s["messages"]!).OfType<JsonObject>())
+        if(((JsonArray)s["deletedMessages"]!).OfType<JsonObject>().Any(x=>x["message"] is not JsonObject m||S(x,"id").Length==0||S(x,"id")!=S(m,"id")))
+            throw new InvalidDataException("已删除的归档记录格式无效。");
+        foreach(var msg in AllArchiveMessages(s))
             foreach(var f in (msg["attachments"] as JsonArray ?? new()).OfType<JsonObject>())
                 if(!SafeStoredName(S(f,"storedName"))) throw new InvalidDataException("附件路径无效。");
         return s;
@@ -122,6 +124,7 @@ public sealed partial class AppService : IDisposable
         {
             var view = (JsonObject)state.DeepClone();
             view.Remove("deletedTasks");
+            view.Remove("deletedMessages");
             view.Remove("assistantReminderReceipts");
             view.Remove("mobileMutationReceipts");
             var settings = (JsonObject)view["settings"]!;
@@ -139,6 +142,7 @@ public sealed partial class AppService : IDisposable
     {
         JsonNode? result;
         string? scheduleType=null, scheduleId=null, deletedStudentId=null, manuallyEditedSummaryId=null;
+        (string Type,string Id)? changedArchiveScope=null;
         bool changed=true, alreadyPersisted=false;
         lock(gate)
         {
@@ -167,6 +171,8 @@ public sealed partial class AppService : IDisposable
                         SendChat(payload);
                         scheduleType=S(payload,"scopeType"); scheduleId=S(payload,"scopeId");
                         MarkPending(scheduleType,scheduleId); break;
+                    case "chat.delete": changedArchiveScope=DeleteArchiveMessage(Required(payload,"id")); break;
+                    case "chat.restore": changedArchiveScope=RestoreArchiveMessage(Required(payload,"id")); break;
                     case "summary.retry":
                         scheduleType=Required(payload,"scopeType"); scheduleId=Required(payload,"scopeId");
                         Scope(scheduleType,scheduleId); MarkPending(scheduleType,scheduleId); break;
@@ -203,6 +209,7 @@ public sealed partial class AppService : IDisposable
                 if(!alreadyPersisted)Save();
                 if(deletedStudentId!=null)CancelSummaryScope("student",deletedStudentId);
                 if(manuallyEditedSummaryId!=null)CancelSummaryScope("student",manuallyEditedSummaryId);
+                if(changedArchiveScope is {} archiveScope)CancelSummaryScope(archiveScope.Type,archiveScope.Id);
                 result=Snapshot();
             }
             catch { state=previous; throw; }
@@ -257,7 +264,12 @@ public sealed partial class AppService : IDisposable
             if(text.Length>100000)throw new InvalidOperationException("填写内容过长。");
             student[field]=field=="grade"?text.Trim():text;
             if(field=="grade")student["gradeAcademicYear"]=AcademicYear(DateTimeOffset.Now);
-            if(field=="currentSummary"){student["summaryStatus"]="idle";student["summaryError"]="";}
+            if(field=="currentSummary")
+            {
+                student["summaryStatus"]="idle";student["summaryError"]="";
+                student.Remove("currentSummaryMessageId");
+                student["currentSummaryRevision"]=I(student,"currentSummaryRevision")+1;
+            }
         }
     }
     void DeleteStudent(string id)

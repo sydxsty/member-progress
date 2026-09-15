@@ -38,3 +38,23 @@
 .alarm-actions .alarm-skip,.quick-presets .alarm-skip{border:0;background:transparent;color:#8393a9;font-size:11px;padding:4px 6px;min-height:28px;white-space:nowrap}.alarm-actions .alarm-skip:hover,.quick-presets .alarm-skip:hover{background:#f0f4fa;color:#5377ac}
 
 .alarm-master{display:flex;align-items:center;gap:9px;margin-top:12px;color:#7c8ca2;font-size:12px}.alarm-master small{font-size:11px;color:#99a5b7}
+
+/* Shared, content-sized metadata columns keep dense member rows easy to scan. */
+.student-heading>.student-name{flex:0 0 var(--member-name,58px);width:var(--member-name,58px);max-width:var(--member-name,58px)}
+.student-heading>.inline-grade,.student-heading>.inline-grade.main-empty,.student-heading>.inline-grade.is-editing{flex:0 0 var(--member-grade,30px);width:var(--member-grade,30px);min-width:0;max-width:var(--member-grade,30px)}
+.student-heading>.inline-tags,.student-heading>.inline-tags.main-empty,.student-heading>.inline-tags.is-editing{flex:0 0 var(--member-meta,70px);width:var(--member-meta,70px);min-width:0;max-width:var(--member-meta,70px)}
+.student-heading>.inline-grade>.field-display{overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.student-heading>.inline-tags>.student-meta{overflow:hidden;min-width:0}
+.student-heading>.inline-tags .tag{flex-shrink:1;min-width:0}
+.student-heading>.inline-currentSummary{min-width:20px}
+.student-heading>.member-reminders{flex-shrink:1;min-width:35px}
+.student-heading>.member-reminders time{min-width:0}
+.wide-days .task-bar.single-day{padding:0 6px}
+.wide-days .task-bar.single-day .task-title{display:block}
+.message-delete{opacity:0;flex:0 0 19px;width:19px;height:19px;min-height:19px;margin:-3px 0 -3px 0;padding:3px;border:0;border-radius:4px;background:transparent;color:#9aa9bd;transition:opacity .12s,background .12s}
+.message-delete svg{width:12px;height:12px}
+.chat-message:hover .message-delete,.chat-message:focus-within .message-delete{opacity:1}
+.message-delete:hover,.message-delete:focus-visible{background:#fff0ee;color:#b56861}
+.bubble-meta{align-items:center;gap:8px}
+.bubble-meta time{margin-left:auto;white-space:nowrap}
+@media(hover:none){.message-delete{opacity:.75}}

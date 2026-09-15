@@ -9,3 +9,5 @@
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation-duration:2s!important}}
 
 .alarm-cancel{font-size:11px;color:#8393a9;padding:8px 2px;max-width:54px;line-height:1.5;flex-shrink:0}.alarm-master{display:flex;align-items:center;gap:10px;margin:14px 0;color:#7c8ca2;font-size:12px}.alarm-master small{color:#99a5b7}.alarm-master .alarm-cancel{margin-left:auto;max-width:none}
+
+.archive-message .message-meta .archive-delete{margin-left:auto;min-height:28px;min-width:40px;padding:4px 5px;border:0;background:transparent;color:#8c98aa;font-size:11px}.archive-message .message-meta .archive-delete:active{color:#b54848;background:#fff1ef}.archive-message .message-meta .archive-delete:focus-visible{outline:2px solid #a9c1ef;outline-offset:1px}

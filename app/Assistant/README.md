@@ -42,3 +42,9 @@ AssistantChecks 是离线解析/存储/更新边界检查；AssistantLiveCheck �
 - `AssistantActionChecks.Run(dataRoot)` 是隔离的离线动作检查，覆盖严格解析、显式授权门槛、清空取消竞态、撤销、保存失败保留和请求去重，不调用模型。
 
 缺少创建字段时，模型可额外输出 `needsReminderDetails:true`（默认 false，不能与非空 reminders/tasks 同时出现）。仅当当前请求已经授权创建时，服务保存内部的 `AwaitingReminderDetails` 和原始 `ReminderRequestText`。紧接的短答通过完整日期/时间词检查或活动对象精确名称检查后，才可继承授权；其他问题、否定和清空都会切断此链。内部字段不进入界面快照或一般历史上下文，应用把已核准的原请求单独传给模型。仍然每条用户消息只调用一次模型。
+
+## 原生归档分析
+
+Responses 归档由 `AppService.Documents.cs` 准备隔离资料副本，`CodexRunner.RunArchiveAsync` 直接启动原生 Codex。`archive.json` 包含当前对象的完整会话与任务；附件保留原格式，并可附文字提取副本。Codex 自主选择原生读取、执行和看图能力；应用不规定分析步骤，也没有自定义文档 MCP 或模型结果缓存。
+
+归档模式使用 Windows 无提权 `workspace-write` 沙箱，派生文件在临时目录生成；现有 GPT 聊天入口保持原动作协议。资料目录不包含连接配置或密钥。取消、删除、手工改进展及请求修订都会阻止旧分析落库。新摘要记录来源消息及生成的当前任务，支持删除和撤销时保留手工改动。
