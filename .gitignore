@@ -7,6 +7,7 @@
 !/app/
 !/mobile/
 !/scripts/
+!/wechat-reader/
 
 /app/*
 !/app/*.cs
@@ -17,6 +18,11 @@
 !/app/web/
 !/app/runtime/
 !/app/Remote/
+!/app/WeChat/
+
+/app/WeChat/*
+!/app/WeChat/*.cs
+!/app/WeChat/README.md
 
 /app/Assistant/*
 !/app/Assistant/*.cs
@@ -33,6 +39,12 @@
 /app/runtime/*
 !/app/runtime/codex/
 !/app/runtime/frp/
+!/app/runtime/wechat-reader/
+/app/runtime/wechat-reader/*
+!/app/runtime/wechat-reader/bundled.json
+!/app/runtime/embedding/
+/app/runtime/embedding/*
+!/app/runtime/embedding/bundled.json
 /app/runtime/frp/*
 !/app/runtime/frp/bundled.json
 /app/runtime/codex/*
@@ -42,6 +54,7 @@
 !/docs/usage.md
 !/docs/design.md
 !/docs/mobile.md
+!/docs/wechat.md
 !/docs/images/
 /docs/images/*
 !/docs/images/members.png

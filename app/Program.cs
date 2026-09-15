@@ -23,6 +23,33 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--wechat-host-test"))
+        {
+            if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }
+            Environment.Exit(WeChatHostChecks.Run(dataRoot)); return;
+        }
+        if (args.Contains("--wechat-agent-live-test"))
+        {
+            string? connectionFrom = Argument(args, "--connection-from");
+            if (Argument(args, "--data-dir") == null || string.IsNullOrEmpty(connectionFrom)) { Environment.Exit(1); return; }
+            Environment.Exit(WeChatAgentLiveCheck.Run(dataRoot, connectionFrom)); return;
+        }
+        if (args.Contains("--wechat-test"))
+        {
+            if (Argument(args, "--data-dir") == null || Directory.Exists(dataRoot) && Directory.EnumerateFileSystemEntries(dataRoot).Any()) { Environment.Exit(1); return; }
+            Directory.CreateDirectory(dataRoot);
+            try
+            {
+                var result = WeChat.WeChatChecks.Run(dataRoot, AppContext.BaseDirectory, args.Contains("--embedding")).GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(dataRoot, "wechat-result.json"), result.ToJsonString(new JsonSerializerOptions(JsonSerializerOptions.Default) { WriteIndented = true }));
+                Environment.Exit(result["ok"]?.GetValue<bool>() == true ? 0 : 1);
+            }
+            catch (Exception error)
+            {
+                File.WriteAllText(Path.Combine(dataRoot, "wechat-result.json"), JsonSerializer.Serialize(new { ok = false, error = error.ToString() })); Environment.Exit(1);
+            }
+            return;
+        }
         if(args.Contains("--archive-test"))
         {
             Environment.Exit(ArchiveChecks.Run(dataRoot));return;

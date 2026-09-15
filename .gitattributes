@@ -8,3 +8,6 @@
 *.json text eol=lf
 *.png binary
 *.ico binary
+# Keep the upstream patch context and third-party legal notices verbatim.
+wechat-reader/upstream-safe-local.patch -whitespace
+wechat-reader/THIRD_PARTY_LICENSES.txt -whitespace

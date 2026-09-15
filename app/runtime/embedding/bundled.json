@@ -1,0 +1,46 @@
+{
+  "model": "BAAI/bge-m3",
+  "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+  "precision": "float32",
+  "dimensions": 1024,
+  "pooling": "CLS+L2",
+  "source": "https://huggingface.co/BAAI/bge-m3",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "model.onnx",
+      "size": 724923,
+      "sha256": "f84251230831afb359ab26d9fd37d5936d4d9bb5d1d5410e66442f630f24435b"
+    },
+    {
+      "path": "model.onnx_data",
+      "size": 2266820608,
+      "sha256": "1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4"
+    },
+    {
+      "path": "sentencepiece.bpe.model",
+      "size": 5069051,
+      "sha256": "cfc8146abe2a0488e9e2a0c56de7952f7c11ab059eca145a0a727afce0db2865"
+    },
+    {
+      "path": "tokenizer.json",
+      "size": 17098108,
+      "sha256": "21106b6d7dab2952c1d496fb21d5dc9db75c28ed361a05f5020bbba27810dd08"
+    },
+    {
+      "path": "README.md",
+      "size": 15822,
+      "sha256": "0b81ccf9134e5874d620a86e6905062ea999e779c34eb1a7e65eaeb7fe00e450"
+    },
+    {
+      "path": "config.json",
+      "size": 687,
+      "sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa"
+    },
+    {
+      "path": "Constant_7_attr__value",
+      "size": 65552,
+      "sha256": "cdf16f72c5d07b36484056e601ed9687f78477e5d85cee85a34f2406b7fb5906"
+    }
+  ]
+}

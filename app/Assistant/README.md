@@ -48,3 +48,8 @@ AssistantChecks 是离线解析/存储/更新边界检查；AssistantLiveCheck �
 Responses 归档由 `AppService.Documents.cs` 准备隔离资料副本，`CodexRunner.RunArchiveAsync` 直接启动原生 Codex。`archive.json` 包含当前对象的完整会话与任务；附件保留原格式，并可附文字提取副本。Codex 自主选择原生读取、执行和看图能力；应用不规定分析步骤，也没有自定义文档 MCP 或模型结果缓存。
 
 归档模式使用 Windows 无提权 `workspace-write` 沙箱，派生文件在临时目录生成；现有 GPT 聊天入口保持原动作协议。资料目录不包含连接配置或密钥。取消、删除、手工改进展及请求修订都会阻止旧分析落库。新摘要记录来源消息及生成的当前任务，支持删除和撤销时保留手工改动。
+
+
+## 微信及原始资料引用（v11）
+
+AssistantReference 增加 scopeType=wechat，scopeId为模块生成的稳定引用ID。宿主按来源拆分业务与微信引用；PrepareMaterialsAsync委托将原始消息/文件放入一次性资料目录。带显式资料引用的聊天使用原生Codex工具和完整chat-history.json，保留原有最终任务/提醒输出验证。只读资料准备不会触发创建；微信自动分析单独保留候选，点击创建才通过同一个宿主回执接口提交。

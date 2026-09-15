@@ -7,6 +7,16 @@ namespace StudentProgress;
 public sealed partial class AppService
 {
     readonly HashSet<string> backupFiles=new(StringComparer.OrdinalIgnoreCase);
+    readonly Dictionary<string, Action<string>> backupValidators = new(StringComparer.OrdinalIgnoreCase);
+    public void RegisterBackupValidator(string relativePath, Action<string> validator)
+    {
+        var path = relativePath.Replace('\\', '/');
+        lock (gate)
+        {
+            if (!backupFiles.Contains(path)) throw new InvalidOperationException("备份资料尚未登记。");
+            backupValidators[path] = validator;
+        }
+    }
 
     public void RegisterBackupFiles(IEnumerable<string> relativePaths)
     {
@@ -74,14 +84,19 @@ public sealed partial class AppService
                     if(name=="attachments/"&&entry.Length==0)continue;
                     if(name!="state.json"&&!(name.StartsWith("attachments/",StringComparison.Ordinal)&&SafeStoredName(name[12..]))&&!backupFiles.Contains(name))throw new InvalidDataException("备份包含无效路径。");
                     if(!seen.Add(name))throw new InvalidDataException("备份包含重复文件。");
-                    total+=entry.Length;if(total>1024L*1024*1024||entry.Length>100L*1024*1024)throw new InvalidDataException("备份解压后过大。");
+                    total+=entry.Length;if(total>64L*1024*1024*1024||entry.Length>16L*1024*1024*1024)throw new InvalidDataException("备份解压后过大。");
                     var canonical=backupFiles.TryGetValue(name,out var registered)?registered:name;
                     var target=Path.Combine(stage,canonical.Replace('/',Path.DirectorySeparatorChar));
                     Directory.CreateDirectory(Path.GetDirectoryName(target)!);
                     using var from=entry.Open();using var to=new FileStream(target,FileMode.CreateNew,FileAccess.Write);
                     var buffer=new byte[81920];long copied=0;int count;
-                    while((count=from.Read(buffer,0,buffer.Length))>0){copied+=count;if(copied>entry.Length||copied>100L*1024*1024)throw new InvalidDataException("备份文件大小异常。");to.Write(buffer,0,count);}
+                    while((count=from.Read(buffer,0,buffer.Length))>0){copied+=count;if(copied>entry.Length||copied>16L*1024*1024*1024)throw new InvalidDataException("备份文件大小异常。");to.Write(buffer,0,count);}
                 }
+            }
+            foreach (var (relative, validate) in backupValidators)
+            {
+                var path = Path.Combine(stage, relative.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(path)) validate(path);
             }
             var incoming=ParseState(File.ReadAllText(Path.Combine(stage,"state.json")));
             foreach(var msg in AllArchiveMessages(incoming))foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())

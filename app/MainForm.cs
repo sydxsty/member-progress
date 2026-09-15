@@ -7,7 +7,7 @@ using StudentProgress.Remote;
 
 namespace StudentProgress;
 
-public sealed class MainForm : Form
+public sealed partial class MainForm : Form
 {
     private const string AppHost = "student-progress.local";
     private readonly string _dataRoot;
@@ -41,7 +41,8 @@ public sealed class MainForm : Form
         _service.RegisterBackupFiles(new[] { "assistant/history.json", "assistant/settings.json" });
         try
         {
-            _assistant = new AssistantService(dataRoot, AppContext.BaseDirectory, _service.BuildAssistantContext, _service.GetAssistantConnection, _service.CreateAssistantReminders);
+            _assistant = new AssistantService(dataRoot, AppContext.BaseDirectory, BuildAssistantContextWithWeChat, _service.GetAssistantConnection, _service.CreateAssistantReminders);
+            _assistant.PrepareMaterialsAsync = PrepareAssistantMaterialsAsync;
             _assistant.StateChanged += OnAssistantStateChanged;
         }
         catch
@@ -49,6 +50,7 @@ public sealed class MainForm : Form
             _assistantError = "GPT 聊天模块暂时无法读取本机记录，原文件已保留；成员和任务功能可继续使用。";
         }
         _notifications = new Notifications(dataRoot);
+        InitializeWeChat();
         try
         {
             _mobileAccess = new MobileAccess(dataRoot);
@@ -72,6 +74,7 @@ public sealed class MainForm : Form
         _timer.Tick += async (_, _) =>
         {
             await PollRemindersAsync();
+            if (_wechat != null) await _wechat.PollSuggestionsAsync();
             if (_assistant != null)
                 try { await _assistant.InitializeAsync(); } catch { /* Optional runtime updates must not interrupt reminders. */ }
         };
@@ -89,6 +92,7 @@ public sealed class MainForm : Form
             _service.StateChanged -= OnStateChanged;
             _notifications.StatusChanged -= OnStateChanged;
             if (_assistant != null) { _assistant.StateChanged -= OnAssistantStateChanged; _assistant.Dispose(); }
+            if (_wechat != null) { _wechat.StateChanged -= OnWeChatStateChanged; _wechat.Dispose(); }
             _notifications.Dispose(); _service.Dispose();
         };
     }
@@ -114,7 +118,7 @@ public sealed class MainForm : Form
             core.NavigationCompleted += (_, e) =>
             {
                 _ready = e.IsSuccess;
-                if (_ready) { PushState(); PushAssistantState(); ActivateFromNotification(_pendingActivation, false); _pendingActivation = null; }
+                if (_ready) { PushState(); PushAssistantState(); PushWeChatState(); ActivateFromNotification(_pendingActivation, false); _pendingActivation = null; }
             };
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += (_, e) =>
@@ -167,6 +171,7 @@ public sealed class MainForm : Form
                 if (_assistant == null) throw new InvalidOperationException(_assistantError ?? "GPT 聊天模块暂时不可用。");
                 result = await _assistant.HandleAsync(action, payload);
             }
+            else if (action.StartsWith("wechat.", StringComparison.Ordinal)) result = await HandleWeChatActionAsync(action, payload);
             else if (action.StartsWith("mobile.", StringComparison.Ordinal)) result = HandleMobileAction(action, payload);
             else if (action == "app.get") result = Snapshot();
             else if (action == "file.open")
@@ -195,10 +200,17 @@ public sealed class MainForm : Form
                 if (confirmed)
                 {
                     if (_assistant != null) await _assistant.HandleAsync("assistant.cancel", new JsonObject());
-                    result = await _service.HandleAsync(action, new JsonObject { ["path"] = dialog.FileName });
+                    if (_wechat != null) { await _wechat.CancelSuggestionsAsync(); await _wechat.PauseForRestoreAsync(); }
+                    try
+                    {
+                        result = await Task.Run(() => _service.HandleAsync(action, new JsonObject { ["path"] = dialog.FileName }));
+                        _wechat?.ReloadSuggestions();
+                    }
+                    finally { _wechat?.ResumeAfterRestore(); }
                     try { _assistant?.Reload(); _assistantError = null; }
                     catch { _assistantError = "成员资料已恢复，但 GPT 聊天记录暂时无法读取；原文件已保留。"; }
                     PushAssistantState();
+                    PushWeChatState();
                 }
                 else result = new JsonObject { ["cancelled"] = true };
             }

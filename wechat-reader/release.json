@@ -1,0 +1,11 @@
+{
+  "file": "app/runtime/wechat-reader/member-wechat-reader.exe",
+  "target": "windows-amd64",
+  "go": "1.24.7",
+  "sha256": "413e1a8c46ac391f8b7e9e3410ebe4e2eb2bf62f4cca3231be524e4d93f6c531",
+  "size": 10999296,
+  "upstreamCommit": "eb9572ee028cbaa72a50749b9dfe6630b317228f",
+  "maskedKeyPatchCommit": "398f128b7f14365b146a312127d3fbce742d9e20",
+  "source": "wechat-reader",
+  "networkAtRuntime": false
+}

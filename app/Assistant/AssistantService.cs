@@ -20,6 +20,7 @@ public sealed partial class AssistantService : IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private bool maintenance, disposed, clearing;
     public event Action? StateChanged;
+    public Func<JsonObject, string, CancellationToken, Task<JsonObject>>? PrepareMaterialsAsync { get; set; }
 
     public AssistantService(string dataRoot, string appRoot, Func<JsonObject, JsonObject> contextProvider, Func<JsonObject> connectionProvider,
         Func<JsonObject, JsonObject>? reminderCreator = null)
@@ -243,7 +244,7 @@ public sealed partial class AssistantService : IDisposable
         foreach(var reference in (payload["references"] as JsonArray??[]).OfType<JsonObject>())
         {
             string type=AssistantJson.Text(reference["scopeType"]),id=AssistantJson.Text(reference["scopeId"]);
-            if(type is not ("student" or "project")||string.IsNullOrEmpty(id))throw new InvalidOperationException("归档引用无效，请重新选择。");
+            if(type is not ("student" or "project" or "wechat")||string.IsNullOrEmpty(id))throw new InvalidOperationException("归档引用无效，请重新选择。");
             if(references.Any(r=>r.ScopeType==type&&r.ScopeId==id))continue;
             references.Add(new(){ScopeType=type,ScopeId=id,Title=AssistantJson.Text(reference["title"])});
         }
@@ -255,20 +256,37 @@ public sealed partial class AssistantService : IDisposable
         AssistantResponse? response=null;
         JsonObject? context=null;
         string error="";
+        string? materialsDirectory=null;
         try
         {
             request.Token.ThrowIfCancellationRequested();
             context=contextProvider(selection);
-            string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText);
+            bool nativeMaterials = PrepareMaterialsAsync != null && (selection["references"] as JsonArray)?.Count > 0;
+            if (nativeMaterials)
+            {
+                materialsDirectory=Path.Combine(workRoot,"materials-"+Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(materialsDirectory);
+                var materialContext=await PrepareMaterialsAsync!(selection,materialsDirectory,request.Token).ConfigureAwait(false);
+                AssistantJson.WriteAtomic(Path.Combine(materialsDirectory,"chat-history.json"),previous);
+                context["referencedArchives"]=materialContext["references"]?.DeepClone()??new JsonArray();
+                context["materials"]=materialContext;
+            }
+            string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText,nativeMaterials);
             string output=responseProvider!=null
                 ?await responseProvider(prompt,request.Token).ConfigureAwait(false)
-                :await runner.RunAsync(runtime.Executable,workRoot,connectionProvider(),prompt,request.Token).ConfigureAwait(false);
+                :nativeMaterials
+                    ?await runner.RunArchiveAsync(runtime.Executable,materialsDirectory!,connectionProvider(),prompt,request.Token).ConfigureAwait(false)
+                    :await runner.RunAsync(runtime.Executable,workRoot,connectionProvider(),prompt,request.Token).ConfigureAwait(false);
             request.Token.ThrowIfCancellationRequested();
             response=AssistantResponse.Parse(output);
         }
         catch(OperationCanceledException){error="回答已取消，问题已保留。";}
         catch(Exception e) when(e is InvalidOperationException or TimeoutException or IOException or System.Text.Json.JsonException){error=e.Message;}
         catch{error="GPT 暂时无法完成回答，问题已保留，请重试。";}
+        finally
+        {
+            if(materialsDirectory!=null)try{Directory.Delete(materialsDirectory,true);}catch(IOException){}catch(UnauthorizedAccessException){}
+        }
         lock(sync)
         {
             if(currentRequest!=request)return;

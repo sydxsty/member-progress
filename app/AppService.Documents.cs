@@ -38,18 +38,27 @@ public sealed partial class AppService
                 string stored = S(file, "storedName"), name = S(file, "name");
                 file.Remove("storedName"); file.Remove("extractedText");
                 string? path = SafeStoredName(stored) ? Path.Combine(attachmentRoot, stored) : null;
-                if (path == null || !File.Exists(path) || new FileInfo(path).Length > 20L * 1024 * 1024)
+                if (path == null || !File.Exists(path))
                 { file["textStatus"] = "原附件暂时不可读取"; continue; }
                 try
                 {
-                    byte[] bytes = await File.ReadAllBytesAsync(path, cancellation).ConfigureAwait(false);
-                    string hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+                    string hash;
+                    using (var source = File.OpenRead(path)) hash = Convert.ToHexString(await SHA256.HashDataAsync(source, cancellation).ConfigureAwait(false)).ToLowerInvariant();
                     string safeName = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c)).Trim().TrimEnd('.');
                     if (safeName.Length > 100) safeName = safeName[..80] + Path.GetExtension(stored);
                     if (safeName.Length == 0) safeName = "附件" + Path.GetExtension(stored);
                     string relative = $"attachments/{++index:0000}-{safeName}";
-                    await File.WriteAllBytesAsync(Path.Combine(workspace, relative), bytes, cancellation).ConfigureAwait(false);
+                    using (var source = File.OpenRead(path))
+                    using (var target = new FileStream(Path.Combine(workspace, relative), FileMode.Create, FileAccess.Write))
+                        await source.CopyToAsync(target, cancellation).ConfigureAwait(false);
                     file["file"] = relative; file["sha256"] = hash;
+                    if (new FileInfo(path).Length > 100L * 1024 * 1024)
+                    {
+                        file["textStatus"] = "原文件已提供，可按需读取；较大文件不预先展开全文";
+                        coverage.Add(new JsonObject { ["id"] = S(file, "id"), ["name"] = name, ["status"] = S(file, "textStatus"), ["sha256"] = hash });
+                        continue;
+                    }
+                    byte[] bytes = await File.ReadAllBytesAsync(path, cancellation).ConfigureAwait(false);
                     var extracted = AttachmentText.ExtractFull(bytes, Path.GetExtension(stored), cancellation);
                     file["textStatus"] = extracted.Status;
                     if (extracted.Text.Length > 0)
@@ -66,5 +75,33 @@ public sealed partial class AppService
         cancellation.ThrowIfCancellationRequested();
         AssistantJson.WriteAtomic(Path.Combine(workspace, "archive.json"), new JsonObject { ["scope"] = profile.DeepClone(), ["tasks"] = tasks.DeepClone(), ["messages"] = messages });
         return coverage;
+    }
+
+    public async Task<JsonArray> WriteBusinessReferenceMaterialsAsync(JsonObject selection, string workspace, CancellationToken cancellation)
+    {
+        var captured = new List<(JsonObject Profile, JsonArray Tasks, JsonArray Messages)>();
+        lock (gate)
+        {
+            foreach (var reference in (selection["references"] as JsonArray ?? new()).OfType<JsonObject>())
+            {
+                string type = S(reference, "scopeType"), id = S(reference, "scopeId");
+                if (type == "wechat") continue;
+                if (type is not ("student" or "project")) throw new InvalidOperationException("引用类型无效。");
+                var scope = Rows(type == "student" ? "students" : "projects").FirstOrDefault(x => S(x, "id") == id)
+                    ?? (type == "student" ? Rows("archivedStudents").FirstOrDefault(x => S(x, "id") == id) : null)
+                    ?? throw new InvalidOperationException("引用的归档已不存在。");
+                captured.Add((new JsonObject { ["scopeType"] = type, ["id"] = id, ["name"] = S(scope, "name"), ["bio"] = S(scope, "bio"), ["currentSummary"] = S(scope, "currentSummary") },
+                    new JsonArray(Rows("tasks").Where(t => TaskInScope(t, type, id)).Select(t => t.DeepClone()).ToArray()),
+                    new JsonArray(Rows("messages").Where(m => S(m, "scopeType") == type && S(m, "scopeId") == id).Select(m => m.DeepClone()).ToArray())));
+            }
+        }
+        var manifest = new JsonArray();
+        foreach (var item in captured)
+        {
+            string relative = "archives/" + (manifest.Count + 1).ToString("0000");
+            await WriteArchiveWorkspaceAsync(Path.Combine(root, "attachments"), item.Profile, item.Tasks, item.Messages, Path.Combine(workspace, relative), cancellation).ConfigureAwait(false);
+            manifest.Add(new JsonObject { ["scopeType"] = S(item.Profile, "scopeType"), ["scopeId"] = S(item.Profile, "id"), ["title"] = S(item.Profile, "name"), ["file"] = relative + "/archive.json" });
+        }
+        return manifest;
     }
 }

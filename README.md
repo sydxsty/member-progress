@@ -4,7 +4,7 @@
 
 用于跟进成员与项目进度的 Windows 本地桌面应用。记一条进展、拖动任务日期或勾选完成，软件负责保存归档、生成摘要和到点提醒。
 
-当前版本：**1.0.10**。不需要应用账号，首次打开为空白列表。
+当前版本：**1.0.11**。不需要应用账号，首次打开为空白列表。
 
 ## 功能
 
@@ -14,6 +14,7 @@
 - **项目协作**：按成员组成项目，共享任务与归档，成员行显示参与项目。
 - **提醒**：全局、成员、项目提醒及每天、每周、每月、间隔重复；默认取消本次，整个提醒单独开关；甘特图标注，静音 Windows 通知。
 - **GPT 聊天**：参考提醒和最近归档给建议，一键引用整个归档；设置当前用户后自然语言创建个人提醒、日期任务，支持清空与撤销清空会话。
+- **微信只读插件**：选择本机好友或群，完整导入并增量同步；独立聊天与文件库、BGE-M3 FP32 相似度检索、归档/GPT 原文引用、成员关联自动归档及遗漏提醒单卡建议。设置并入 APP 设置，微信资料单独导出。
 - **本地资料**：自动保存、附件复制、完整备份与恢复；密钥由 Windows 加密保存。
 
 ## Android 手机端
@@ -38,6 +39,9 @@ Windows 在 **设置 → 手机连接** 开启访问并设置密码，可配置�
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/prepare-frp.ps1
+powershell -ExecutionPolicy Bypass -File scripts/prepare-embedding.ps1
+# 读取器构建还需 Go（纯 Go 构建，无需 C 工具链），参见 wechat-reader/README.md
+powershell -ExecutionPolicy Bypass -File wechat-reader/build.ps1
 dotnet publish app/StudentProgress.csproj -c Release -r win-x64 --self-contained false -o artifacts/portable
 .\artifacts\portable\StudentProgress.exe
 ```
@@ -64,13 +68,15 @@ GPT 摘要和聊天需要在设置中配置可用的模型接口。不开启 GPT
 | `app/Assistant/` | 独立 GPT 聊天、Codex CLI 调用及更新模块 |
 | `app/web/` | 电脑页面、样式、甘特图和聊天界面 |
 | `app/web/mobile/` | 随 Windows 更新的手机页面 |
+| `app/WeChat/` | 独立微信库、同步、原件引用、相似度检索及提醒建议 |
+| `wechat-reader/` | Windows 微信数据库只读适配器及固定来源记录 |
 | `app/Remote/` | 手机 HTTP 接口、连接设置与 frpc 管理 |
 | `mobile/android/` | Android 外壳、登录及静音定时提醒 |
 | `app/*Checks.cs` | 使用隔离目录的定向检查 |
 
 界面使用“成员”，内部 `StudentProgress`、`student` 数据键和接口名保留，以兼容已有资料。
 
-[使用说明](docs/usage.md) · [设计方案](docs/design.md) · [聊天模块说明](app/Assistant/README.md)
+[微信模块说明](docs/wechat.md) · [使用说明](docs/usage.md) · [设计方案](docs/design.md) · [聊天模块说明](app/Assistant/README.md)
 
 ## 检查
 

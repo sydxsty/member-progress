@@ -32,6 +32,8 @@ public sealed partial class AppService
             foreach (var message in Rows("messages"))
             {
                 var row = AssistantFields(message, "id", "scopeType", "scopeId", "role", "text", "createdAt", "suggestions");
+                if (message["sourceReferences"] is JsonArray sources)
+                    row["sourceReferences"] = new JsonArray(sources.OfType<JsonObject>().Select(r => (JsonNode)AssistantFields(r, "scopeType", "scopeId", "title")).ToArray());
                 row["attachments"] = new JsonArray((message["attachments"] as JsonArray ?? new()).OfType<JsonObject>()
                     .Select(a => (JsonNode)AssistantFields(a, "id", "name", "mime", "size", "textStatus")).ToArray());
                 messages.Add(row);
