@@ -45,7 +45,13 @@ internal sealed class WeChatStore : IDisposable
     internal void SaveConversation(JsonObject c)=>Run("INSERT INTO conversations(id,accountId,externalId,name,kind,payload) VALUES($id,$a,$e,$n,$k,$p) ON CONFLICT(id) DO UPDATE SET name=excluded.name,kind=excluded.kind,payload=excluded.payload",("$id",S(c,"id")),("$a",S(c,"accountId")),("$e",S(c,"externalId")),("$n",S(c,"name")),("$k",S(c,"kind")),("$p",c.ToJsonString()));
     internal JsonArray Conversations()
     {
-        lock(gate){var a=new JsonArray();using var c=Command("SELECT c.payload,COUNT(m.id),MAX(m.whenMs) FROM conversations c LEFT JOIN messages m ON m.conversationId=c.id GROUP BY c.id ORDER BY MAX(m.whenMs) DESC,c.name");using var r=c.ExecuteReader();while(r.Read()){var x=Parse(r.GetString(0));x["messageCount"]=r.GetInt64(1);x["lastMessageAt"]=r.IsDBNull(2)?"":DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(2)).ToString("O");a.Add(x);}return a;}
+        lock(gate)
+        {
+            var rows=new List<JsonObject>();using var c=Command("SELECT c.payload,COUNT(m.id),MAX(m.whenMs) FROM conversations c LEFT JOIN messages m ON m.conversationId=c.id GROUP BY c.id");using var r=c.ExecuteReader();
+            while(r.Read()){var x=Parse(r.GetString(0));x["messageCount"]=r.GetInt64(1);x["lastMessageAt"]=r.IsDBNull(2)?"":DateTimeOffset.FromUnixTimeMilliseconds(r.GetInt64(2)).ToString("O");rows.Add(x);}
+            static long LastMessage(JsonObject row)=>DateTimeOffset.TryParse(S(row,"sourceLastMessageAt"),out var source)?source.ToUnixTimeMilliseconds():DateTimeOffset.TryParse(S(row,"lastMessageAt"),out var imported)?imported.ToUnixTimeMilliseconds():long.MinValue;
+            return new JsonArray(rows.OrderByDescending(LastMessage).ThenBy(x=>S(x,"name"),StringComparer.Ordinal).ThenBy(x=>S(x,"id"),StringComparer.Ordinal).Cast<JsonNode?>().ToArray());
+        }
     }
     internal JsonObject? Conversation(string id){lock(gate){using var c=Command("SELECT payload FROM conversations WHERE id=$id",("$id",id));return c.ExecuteScalar() is string s?Parse(s):null;}}
     internal string CanonicalMessageId(string accountId,string conversationId,string localId,string serverId)

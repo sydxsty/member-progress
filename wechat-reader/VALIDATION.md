@@ -12,3 +12,5 @@
 限制：微信 4.x 加密图片原件可定位并保留，但本版本未承诺全部解码，输出 encrypted 状态；语音保留原始 SILK。本地已被清理或未下载的原件记录为 missing，之后同步时补齐。
 
 私有 QA 位于工作区 03_过程缓存/tmp/member-progress-v11/private-reader，不属于源码或发布包。发布二进制校验见 release.json。
+
+v12：contacts-only读取增加sourceLastMessageAt，使用SessionTable.last_timestamp而非置顶排序字段。实际869条联系人中340条有源消息时间，逐项与只读数据库核对一致，输出按最近时间倒序；未导出消息正文。

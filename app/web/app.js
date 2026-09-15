@@ -30,7 +30,7 @@
   let drawer = null, modal = null, inlineAdd = null, inlineEdit = null, uploading = false, dragDepth = 0, repainting = false;
   const drafts = new Map(), taskDrafts = new Map(), pending = new Map(), busy = new Set();
   let rpcId = 0, timelineGesture = null, studentGesture = null, suppressTimelineClickUntil = 0, suppressStudentClickUntil = 0, composing = false;
-  let boardRefreshPending=false;
+  let boardRefreshPending=false,compositionRenderPending=false,compositionMainPending=false,compositionModalPending=false,compositionFrame=0;
   const MIN_DAY_WIDTH = 24, MAX_DAY_WIDTH = 160;
   let dayWidth = 34;
   try {const saved=Number(localStorage.getItem('member-progress:gantt-day-width'));if(Number.isFinite(saved)&&saved>=MIN_DAY_WIDTH&&saved<=MAX_DAY_WIDTH)dayWidth=saved;} catch {}
@@ -53,7 +53,7 @@
   const isOverdue = t => !t.done && t.due && t.due<todayKey();
   const isBlocked = t => !t.done && (t.tags||[]).some(t=>/受阻|阻塞|卡住/.test(t));
   const isSnapshot = r => r && Array.isArray(r.students) && Array.isArray(r.tasks);
-  function update(r) { if(isSnapshot(r)) { db={...db,...r,settings:r.settings||{},status:r.status||{}}; if(window.BoardSplit?.dragging)boardRefreshPending=true;else if(!timelineGesture&&!studentGesture&&!composing)render(); } }
+  function update(r) { if(isSnapshot(r)) { db={...db,...r,settings:r.settings||{},status:r.status||{}}; if(window.BoardSplit?.dragging)boardRefreshPending=true;else if(composing||compositionFrame)compositionRenderPending=true;else if(!timelineGesture&&!studentGesture)render(); } }
   function rpc(action,payload={}) {
     if(!native) return (action.startsWith('assistant.')?window.AssistantChat.previewHandle(action,payload):action.startsWith('wechat.')?window.WeChatModule.previewHandle(action,payload):window.PreviewAdapter.handle(action,payload)).then(result=>{update(result);return result;});
     return new Promise((resolve,reject)=>{
@@ -100,7 +100,7 @@
     const c=$('.chat-messages');if(c)c.scrollTop=chatBottom?c.scrollHeight:(chatTop||0);
     if(focus){const target=document.querySelector(`[data-focus="${CSS.escape(focus)}"]`);if(target){target.focus({preventScroll:true});if(typeof selection==='number'&&target.setSelectionRange)try{target.setSelectionRange(selection,selectionEnd??selection);}catch{}}}
   }
-  function render() { preserveUI(()=>{renderSidebar();renderMain();renderDrawer();renderModal();}); }
+  function render() { if(composing||compositionFrame){compositionRenderPending=true;return;}preserveUI(()=>{renderSidebar();renderMain();renderDrawer();renderModal();}); }
   function fitBoard() {
     const board=$('.board'),gantt=$('.gantt-scroll');if(!board)return;
     window.BoardSplit.fit(board);
@@ -156,6 +156,7 @@
     return `<header class="page-header"><div><div class="heading-line"><h1>${esc(title)}</h1>${count==null?'':`<span class="count">${count}</span>`}</div></div><div class="header-actions"><div class="search-wrap">${icon('search')}<input type="search" data-focus="search" data-input="search" placeholder="${view==='archive'?'搜索记录与摘要':'搜索姓名、标签或任务'}" value="${attr(search)}" aria-label="搜索"></div><button data-action="alarms" title="全局、成员与项目提醒">${icon('bell')}提醒</button>${extra}</div></header>`;
   }
   function renderMain() {
+    if(composing||compositionFrame){compositionMainPending=true;return;}
     if(view==='students') renderStudents();
     else if(view==='projects') renderProjects();
     else if(view==='assistant') window.AssistantChat.mount($('#main'));
@@ -321,6 +322,7 @@
   function alarmMasterSwitch(a) {return a?`<div class="alarm-master"><span>整个提醒</span><button type="button" class="toggle${a.enabled?' on':''}" data-action="toggle-alarm" data-id="${attr(a.id)}" title="${a.enabled?'关闭':'启用'}整个提醒" aria-label="${a.enabled?'关闭':'启用'}整个提醒" role="switch" aria-checked="${!!a.enabled}"></button><small>${a.enabled?'已启用':'已关闭'}</small></div>`:'';}
   function openSettings() {modal={type:'settings',values:{baseUrl:db.settings.baseUrl||'',model:db.settings.model||'',apiMode:db.settings.apiMode||'responses',key:'',currentStudentId:db.settings.currentStudentId||''}};renderModal();}
   function renderModal() {
+    if(composing||compositionFrame){compositionModalPending=true;return;}
     if(!modal){$('#modal-root').innerHTML='';return;}
     const v=modal.values||{};let title='',body='',footer='',form='';
     if(modal.type==='student') {
@@ -354,8 +356,8 @@
       if(modal.type==='alarms'&&((field==='when'&&String(previous).slice(0,10)!==el.value.slice(0,10))||(field==='repeat'&&el.value==='monthly')))modal.values.monthDay=Number(modal.values.when.slice(8,10));
     }
   }
-  document.addEventListener('compositionstart',()=>{composing=true;});
-  document.addEventListener('compositionend',()=>{composing=false;requestAnimationFrame(()=>{if(!composing&&!timelineGesture&&!studentGesture)render();});});
+  document.addEventListener('compositionstart',()=>{composing=true;if(compositionFrame){cancelAnimationFrame(compositionFrame);compositionFrame=0;}});
+  document.addEventListener('compositionend',e=>{syncModalInput(e.target);composing=false;compositionFrame=requestAnimationFrame(()=>{compositionFrame=0;if(composing||timelineGesture||studentGesture)return;const full=compositionRenderPending,main=compositionMainPending,settings=compositionModalPending;compositionRenderPending=compositionMainPending=compositionModalPending=false;if(full)render();else if(main||settings)preserveUI(()=>{if(main)renderMain();if(settings)renderModal();});});});
   document.addEventListener('input',e=>{
     const el=e.target;syncModalInput(el);
     if(el.hasAttribute('data-inline-value')&&inlineEdit){inlineEdit.value=el.value;inlineEdit.error='';return;}
@@ -606,6 +608,7 @@
     });
   }
   document.addEventListener('keydown',e=>{
+    if((e.key==='Enter'||e.key==='Escape')&&(composing||compositionFrame||e.isComposing||e.keyCode===229))return;
     if(e.target.matches?.('.student-drag-handle')&&['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const id=e.target.dataset.id,ids=db.students.filter(studentMatches).map(s=>s.id),index=ids.indexOf(id),after=e.key==='ArrowDown',target=ids[index+(after?1:-1)];if(target)reorderStudents(id,target,after,ids);return;}
     if(e.target.hasAttribute?.('data-inline-value')&&inlineEdit){
       if(e.key==='Escape'){e.preventDefault();if(!inlineEdit.saving){inlineEdit=null;render();}return;}

@@ -38,20 +38,55 @@ public sealed partial class WeChatService : IDisposable
     internal static string S(JsonNode? n,string key,string fallback="")=>WeChatStore.S(n,key,fallback);
     internal static JsonObject Clone(JsonObject o)=>o.DeepClone().AsObject();
     internal static int I(JsonNode? n,string k,int fallback)=>n?[k] is JsonValue v&&v.TryGetValue<int>(out var x)?x:fallback;
-    static JsonObject Defaults()=>new(){["enabled"]=true,["checkReminders"]=true,["checkMinutes"]=60,["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
-    JsonObject ReadConfig(){var p=Path.Combine(root,"config.json");if(!File.Exists(p))return Defaults();try{return JsonNode.Parse(File.ReadAllText(p))!.AsObject();}catch{throw new InvalidDataException("微信设置无法读取，请保留现有 Data/wechat 文件夹。");}}
+    static JsonObject Defaults()=>new(){["enabled"]=true,["checkReminders"]=true,["checkMinutes"]=60,["archiveFrom"]=DateTime.Today.ToString("yyyy-MM-dd"),["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
+    internal static string NormalizeArchiveFrom(string value)
+    {
+        if(value is "" or "all")return "all";
+        if(!DateOnly.TryParseExact(value,"yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.None,out _))throw new InvalidOperationException("请选择文件自动归档的起始日期。");
+        return value;
+    }
+    internal static JsonObject UpgradeGlobalArchiveDate(JsonObject original)
+    {
+        var next=original.DeepClone().AsObject();
+        var bindings=(next["bindings"] as JsonArray??new()).OfType<JsonObject>().ToArray();
+        if(next["archiveFrom"] is null)
+        {
+            var dates=bindings.Where(b=>b.ContainsKey("archiveFrom")).Select(b=>NormalizeArchiveFrom(S(b,"archiveFrom"))).ToArray();
+            next["archiveFrom"]=dates.Contains("all")?"all":dates.Length>0?dates.Order(StringComparer.Ordinal).First():DateTime.Today.ToString("yyyy-MM-dd");
+        }
+        else next["archiveFrom"]=NormalizeArchiveFrom(S(next,"archiveFrom"));
+        foreach(var binding in bindings)binding.Remove("archiveFrom");
+        return next;
+    }
+    JsonObject ReadConfig()
+    {
+        var p=Path.Combine(root,"config.json");if(!File.Exists(p))return Defaults();
+        try
+        {
+            var original=JsonNode.Parse(File.ReadAllText(p))!.AsObject();var next=UpgradeGlobalArchiveDate(original);
+            if(!JsonNode.DeepEquals(original,next))
+            {
+                var previous=Path.Combine(root,"config.pre-global-date.json");if(!File.Exists(previous))File.Copy(p,previous);
+                WriteJson(p,next);
+            }
+            return next;
+        }
+        catch{throw new InvalidDataException("微信设置无法读取，请保留现有 Data/wechat 文件夹。");}
+    }
     internal void SaveConfig(){lock(gate)WriteJson(Path.Combine(root,"config.json"),config);}
     internal static void WriteJson(string path,JsonNode value){Directory.CreateDirectory(Path.GetDirectoryName(path)!);string tmp=path+"."+Guid.NewGuid().ToString("N")+".tmp";try{File.WriteAllText(tmp,value.ToJsonString(),new UTF8Encoding(false));File.Move(tmp,path,true);}finally{if(File.Exists(tmp))File.Delete(tmp);}}
     public void SaveConfiguration(JsonObject incoming)
     {
         lock(gate)
         {
-            config["enabled"]=B(incoming,"enabled",B(config,"enabled",true));
-            config["checkReminders"]=B(incoming,"checkReminders",B(config,"checkReminders",true));
-            var minutes=I(incoming,"checkMinutes",I(config,"checkMinutes",60));if(minutes==0)config["checkReminders"]=false;config["checkMinutes"]=minutes==0?60:Math.Clamp(minutes,5,1440);
-            if(incoming["selectedConversationIds"] is JsonArray ids)config["selectedConversationIds"]=new JsonArray(ids.Select(x=>x?.GetValue<string>()??"").Where(x=>store.Conversation(x)!=null).Distinct().Select(x=>(JsonNode?)JsonValue.Create(x)).ToArray());
-            if(incoming["bindings"] is JsonArray bindings)config["bindings"]=new JsonArray(bindings.OfType<JsonObject>().Select(ValidateBinding).Cast<JsonNode?>().ToArray());
-            SaveConfig();
+            var next=Clone(config);
+            next["enabled"]=B(incoming,"enabled",B(config,"enabled",true));
+            next["checkReminders"]=B(incoming,"checkReminders",B(config,"checkReminders",true));
+            next["archiveFrom"]=NormalizeArchiveFrom(S(incoming,"archiveFrom",S(config,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"))));
+            var minutes=I(incoming,"checkMinutes",I(config,"checkMinutes",60));if(minutes==0)next["checkReminders"]=false;next["checkMinutes"]=minutes==0?60:Math.Clamp(minutes,5,1440);
+            if(incoming["selectedConversationIds"] is JsonArray ids)next["selectedConversationIds"]=new JsonArray(ids.Select(x=>x?.GetValue<string>()??"").Where(x=>store.Conversation(x)!=null).Distinct().Select(x=>(JsonNode?)JsonValue.Create(x)).ToArray());
+            if(incoming["bindings"] is JsonArray bindings)next["bindings"]=new JsonArray(bindings.OfType<JsonObject>().Select(ValidateBinding).Cast<JsonNode?>().ToArray());
+            WriteJson(Path.Combine(root,"config.json"),next);config=next;
         }
         Changed();if(!paused&&B(Configuration,"enabled")&&Selected().Count>0)_=BackgroundSyncAsync();
     }
@@ -62,7 +97,7 @@ public sealed partial class WeChatService : IDisposable
         var b=new JsonObject{["conversationId"]=conv};var business=businessSnapshot();string member=S(item,"memberId"),project=S(item,"projectId");
         if(member.Length>0&&!(business["students"] as JsonArray??new()).Any(x=>S(x,"id")==member))throw new InvalidOperationException("关联成员不存在。");
         if(project.Length>0&&!(business["projects"] as JsonArray??new()).Any(x=>S(x,"id")==project))throw new InvalidOperationException("关联项目不存在。");
-        b["memberId"]=member;b["projectId"]=project;var from=S(item,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"));if(from.Length==0)from="all";if(from!="all"&&!DateOnly.TryParseExact(from,"yyyy-MM-dd",out _))throw new InvalidOperationException("请选择文件归档起始日期。");b["archiveFrom"]=from;return b;
+        b["memberId"]=member;b["projectId"]=project;return b;
     }
     void Changed(){try{StateChanged?.Invoke();}catch{}}
     internal void NotifyChanged()=>Changed();
@@ -114,7 +149,7 @@ public sealed partial class WeChatService : IDisposable
     async Task ImportContactsAsync(string file,string accountId,CancellationToken ct)
     {
         if(!File.Exists(file))return;await using var stream=File.OpenRead(file);var parsed=await JsonNode.ParseAsync(stream,cancellationToken:ct);var rows=parsed as JsonArray??parsed?["contacts"] as JsonArray??new();
-        foreach(var item in rows.OfType<JsonObject>()){var external=S(item,"conversationId",S(item,"id"));if(external.Length==0)continue;store.SaveConversation(new JsonObject{["id"]=WeChatStore.Stable(accountId,external),["accountId"]=accountId,["externalId"]=external,["name"]=new[]{S(item,"remark"),S(item,"name"),S(item,"nickname"),external}.First(x=>!string.IsNullOrWhiteSpace(x)),["kind"]=S(item,"type",external.EndsWith("@chatroom")?"group":"friend")});}
+        foreach(var item in rows.OfType<JsonObject>()){var external=S(item,"conversationId",S(item,"id"));if(external.Length==0)continue;store.SaveConversation(new JsonObject{["id"]=WeChatStore.Stable(accountId,external),["accountId"]=accountId,["externalId"]=external,["name"]=new[]{S(item,"remark"),S(item,"name"),S(item,"nickname"),external}.First(x=>!string.IsNullOrWhiteSpace(x)),["kind"]=S(item,"type",external.EndsWith("@chatroom")?"group":"friend"),["sourceLastMessageAt"]=S(item,"sourceLastMessageAt")});}
     }
     public async Task ConnectAsync(CancellationToken ct=default)
     {

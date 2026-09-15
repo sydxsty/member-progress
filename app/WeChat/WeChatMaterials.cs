@@ -86,14 +86,14 @@ public sealed partial class WeChatService
     }
     async Task ArchiveFilesAsync(CancellationToken ct)
     {
-        var bindings=(Configuration["bindings"] as JsonArray??new()).OfType<JsonObject>().ToArray();if(bindings.Length==0)return;var selected=Selected();var business=businessSnapshot();var existingMembers=new HashSet<string>((business["students"] as JsonArray??new()).Select(x=>S(x,"id")));var existingProjects=new HashSet<string>((business["projects"] as JsonArray??new()).Select(x=>S(x,"id")));
+        var settings=Configuration;var from=S(settings,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"));var bindings=(settings["bindings"] as JsonArray??new()).OfType<JsonObject>().ToArray();if(bindings.Length==0)return;var selected=Selected();var business=businessSnapshot();var existingMembers=new HashSet<string>((business["students"] as JsonArray??new()).Select(x=>S(x,"id")));var existingProjects=new HashSet<string>((business["projects"] as JsonArray??new()).Select(x=>S(x,"id")));
         foreach(var f in store.ArchiveCandidates().OfType<JsonObject>())
         {
             ct.ThrowIfCancellationRequested();var m=store.Message(S(f,"messageId"));if(m==null||B(m,"isSelf")||!selected.Contains(S(m,"conversationId")))continue;
             var conv=store.Conversation(S(m,"conversationId"));var senderConv=WeChatStore.Stable(S(m,"accountId"),S(m,"senderId"));var applicable=bindings.Where(b=>S(b,"conversationId")==S(m,"conversationId")||S(b,"conversationId")==senderConv);
             foreach(var binding in applicable)
             {
-                var from=S(binding,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"));if(from!="all"&&DateTimeOffset.Parse(S(m,"when")).LocalDateTime.Date<DateTime.Parse(from).Date)continue;
+                if(from!="all"&&DateTimeOffset.Parse(S(m,"when")).LocalDateTime.Date<DateTime.Parse(from).Date)continue;
                 foreach(var (type,target) in new[]{("student",S(binding,"memberId")),("project",S(binding,"projectId"))})
                 {
                     if(target.Length==0||(type=="student"?!existingMembers.Contains(target):!existingProjects.Contains(target)))continue;var receipt="file-"+WeChatStore.Stable(S(f,"id"),type,target);if(store.HasReceipt(receipt))continue;

@@ -21,15 +21,16 @@ import (
 )
 
 type Contact struct {
-	ID             string `json:"id"`
-	ConversationID string `json:"conversationId"`
-	AccountID      string `json:"accountId"`
-	Name           string `json:"name"`
-	Remark         string `json:"remark"`
-	Nickname       string `json:"nickname"`
-	Alias          string `json:"alias"`
-	Type           string `json:"type"`
-	IsFriend       bool   `json:"isFriend"`
+	ID                  string `json:"id"`
+	ConversationID      string `json:"conversationId"`
+	AccountID           string `json:"accountId"`
+	Name                string `json:"name"`
+	Remark              string `json:"remark"`
+	Nickname            string `json:"nickname"`
+	Alias               string `json:"alias"`
+	Type                string `json:"type"`
+	IsFriend            bool   `json:"isFriend"`
+	SourceLastMessageAt string `json:"sourceLastMessageAt,omitempty"`
 }
 type Attachment struct {
 	ID     string `json:"id"`
@@ -162,20 +163,40 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 		return r, errors.New("contact database missing")
 	}
 	if d := dbs["session.db"]; d != nil {
-		rows, e := d.Query("SELECT username FROM SessionTable")
+		hasTimestamp := true
+		rows, e := d.Query("SELECT username, IFNULL(last_timestamp,0) FROM SessionTable")
 		if e != nil {
-			rows, e = d.Query("SELECT username FROM session")
+			rows, e = d.Query("SELECT username, IFNULL(last_timestamp,0) FROM session")
+		}
+		if e != nil {
+			hasTimestamp = false
+			rows, e = d.Query("SELECT username FROM SessionTable")
+			if e != nil {
+				rows, e = d.Query("SELECT username FROM session")
+			}
 		}
 		if e == nil {
 			for rows.Next() {
 				var id string
-				if rows.Scan(&id) == nil && id != "" {
+				var lastTimestamp int64
+				var scanErr error
+				if hasTimestamp {
+					scanErr = rows.Scan(&id, &lastTimestamp)
+				} else {
+					scanErr = rows.Scan(&id)
+				}
+				if scanErr == nil && id != "" {
 					if _, ok := contacts[id]; !ok {
 						typ := "friend"
 						if strings.HasSuffix(id, "@chatroom") {
 							typ = "group"
 						}
 						contacts[id] = Contact{ID: id, ConversationID: id, AccountID: a.ID, Name: id, Type: typ, IsFriend: true}
+					}
+					if lastTimestamp > 0 {
+						contact := contacts[id]
+						contact.SourceLastMessageAt = time.Unix(lastTimestamp, 0).UTC().Format(time.RFC3339)
+						contacts[id] = contact
 					}
 				}
 			}
@@ -192,7 +213,15 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 			list = append(list, c)
 		}
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].SourceLastMessageAt != list[j].SourceLastMessageAt {
+			return list[i].SourceLastMessageAt > list[j].SourceLastMessageAt
+		}
+		if list[i].Name != list[j].Name {
+			return list[i].Name < list[j].Name
+		}
+		return list[i].ID < list[j].ID
+	})
 	r.Contacts = len(list)
 	if e = atomicJSON(filepath.Join(out, "contacts.json"), list); e != nil {
 		return r, e

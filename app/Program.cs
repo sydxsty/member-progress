@@ -23,6 +23,11 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--wechat-revision-test"))
+        {
+            if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }
+            Environment.Exit(WeChatRevisionChecks.Run(dataRoot)); return;
+        }
         if (args.Contains("--wechat-host-test"))
         {
             if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }

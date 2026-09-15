@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>StudentProgress</AssemblyName>
-    <Version>1.0.11</Version>
+    <Version>1.0.12</Version>
     <RootNamespace>StudentProgress</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
@@ -27,7 +27,7 @@
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.22.1" />
     <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Cloud.Unum.USearch" Version="2.26.2" />
-    <Content Include="runtime\embedding\**\*" Exclude="runtime\embedding\**\*.partial" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="runtime\embedding\**\*" Exclude="runtime\embedding\**\*.partial" Condition="'$(SkipBundledEmbedding)' != 'true'" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
   <Target Name="UseOnlyWinFormsWebView" BeforeTargets="ResolveAssemblyReferences">
     <ItemGroup>

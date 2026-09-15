@@ -51,6 +51,7 @@ public sealed partial class WeChatService
     public static void ValidateSettingsBackup(string path)
     {
         var value = ReadSmallBackup(path);
+        if (value.ContainsKey("archiveFrom")) NormalizeArchiveFrom(Text(value["archiveFrom"]));
         foreach (string field in new[] { "enabled", "checkReminders" })
             if (value[field] is not null && (value[field] is not JsonValue flag || !flag.TryGetValue<bool>(out _))) throw new InvalidDataException("微信设置中的开关格式无效。");
         if (value["checkMinutes"] is not null && (value["checkMinutes"] is not JsonValue minutes || !minutes.TryGetValue<int>(out var interval) || interval < 0 || interval > 1440)) throw new InvalidDataException("微信检查频率格式无效。");
