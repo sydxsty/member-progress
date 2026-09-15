@@ -4,9 +4,14 @@ namespace StudentProgress;
 
 public sealed partial class MainForm
 {
+    // This host intentionally has no folder mapping: WebView2 resolves mapped
+    // hosts directly and bypasses WebResourceRequested for virtual files.
+    internal const string MediaHost = "student-progress-media.local";
+
     bool TryServeImage(CoreWebView2WebResourceRequestedEventArgs request, CoreWebView2Environment environment)
     {
-        if (!IsTrusted(request.Request.Uri) || !Uri.TryCreate(request.Request.Uri, UriKind.Absolute, out var uri)) return false;
+        if (!Uri.TryCreate(request.Request.Uri, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
+            !uri.Host.Equals(MediaHost, StringComparison.OrdinalIgnoreCase)) return false;
         bool wechat = uri.AbsolutePath.StartsWith("/wechat-image/", StringComparison.Ordinal);
         bool archive = uri.AbsolutePath.StartsWith("/archive-image/", StringComparison.Ordinal);
         if (!wechat && !archive) return false;

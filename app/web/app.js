@@ -292,7 +292,7 @@
   function fileSize(n) {return n>=1048576?`${(n/1048576).toFixed(1)} MB`:n>=1024?`${Math.ceil(n/1024)} KB`:`${n||0} B`;}
   function attachmentCard(a) {
     const image=/^image\/(png|jpeg|gif|webp|bmp)$/i.test(a.mime||'')||/\.(png|jpe?g|gif|webp|bmp)$/i.test(a.name||'');
-    return `<button class="attachment-card ${image?'with-image':''}" data-action="open-file" data-id="${attr(a.id)}" title="${image?'打开图片':'打开附件'}">${image?`<img class="archive-image" loading="lazy" src="/archive-image/${encodeURIComponent(a.id)}" alt="${attr(a.name)}">`:`<span class="attachment-icon">${icon('file')}</span>`}<span class="attachment-info"><strong>${esc(a.name)}</strong><small>${fileSize(a.size)} · ${esc(fileStatus(a))}</small></span></button>`;
+    return `<button class="attachment-card ${image?'with-image':''}" data-action="open-file" data-id="${attr(a.id)}" title="${image?'打开图片':'打开附件'}">${image?`<img class="archive-image" loading="lazy" src="https://student-progress-media.local/archive-image/${encodeURIComponent(a.id)}" alt="${attr(a.name)}">`:`<span class="attachment-icon">${icon('file')}</span>`}<span class="attachment-info"><strong>${esc(a.name)}</strong><small>${fileSize(a.size)} · ${esc(fileStatus(a))}</small></span></button>`;
   }
   function messageBubble(m) {
     const user=m.role==='user', suggestions=isArchived(drawer.type,drawer.id)?[]:m.suggestions||[];

@@ -112,7 +112,7 @@ internal sealed class WeChatStore : IDisposable
     }
     JsonArray FilesForMessage(string id,bool host)
     {
-        var a=new JsonArray();using var c=Command("SELECT payload,storedName,sourcePath,hash,extractedText FROM files WHERE messageId=$id ORDER BY name",("$id",id));using var r=c.ExecuteReader();while(r.Read()){var f=Parse(r.GetString(0));f["available"]=r.GetString(1).Length>0;if(r.GetString(1).Length>0&&S(f,"mime").StartsWith("image/")&&S(f,"status")!="encrypted")f["previewUrl"]="https://student-progress.local/wechat-image/"+Uri.EscapeDataString(S(f,"id"))+"?v="+r.GetString(3);if(!host){f.Remove("originalStoredName");f.Remove("sourceWriteTicks");f.Remove("sourceSize");}if(host){f["storedName"]=r.GetString(1);f["sourcePath"]=r.GetString(2);f["hash"]=r.GetString(3);f["extractedText"]=r.GetString(4);}a.Add(f);}return a;
+        var a=new JsonArray();using var c=Command("SELECT payload,storedName,sourcePath,hash,extractedText FROM files WHERE messageId=$id ORDER BY name",("$id",id));using var r=c.ExecuteReader();while(r.Read()){var f=Parse(r.GetString(0));f["available"]=r.GetString(1).Length>0;if(r.GetString(1).Length>0&&S(f,"mime").StartsWith("image/")&&S(f,"status")!="encrypted")f["previewUrl"]="https://student-progress-media.local/wechat-image/"+Uri.EscapeDataString(S(f,"id"))+"?v="+r.GetString(3);if(!host){f.Remove("originalStoredName");f.Remove("sourceWriteTicks");f.Remove("sourceSize");}if(host){f["storedName"]=r.GetString(1);f["sourcePath"]=r.GetString(2);f["hash"]=r.GetString(3);f["extractedText"]=r.GetString(4);}a.Add(f);}return a;
     }
     internal JsonObject Messages(string conversationId,long before=long.MaxValue,int limit=50,string beforeId="")
     {
