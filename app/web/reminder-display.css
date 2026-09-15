@@ -1,0 +1,12 @@
+.member-reminders.reminder-today{color:#aa6118;background:#fff0d5;font-weight:600}
+.member-reminders.reminder-today time{color:#a26827}
+.member-reminders.reminder-today:hover,.member-reminders.reminder-today:focus-visible{color:#935014;background:#ffe7be}
+.timeline-reminder.reminder-today{color:#9a570f;background:#ffe7b3;font-weight:600}
+.timeline-reminder.reminder-today.reminder-fired{opacity:.85}
+.timeline-reminder.reminder-today:hover,.timeline-reminder.reminder-today:focus-visible{color:#88480d;background:#ffda8f;outline-color:#d6a752}
+.timeline-reminder.reminder-global.reminder-today{color:#9a7844;background:transparent;font-weight:600}
+.timeline-reminder.reminder-global.reminder-today:hover,.timeline-reminder.reminder-global.reminder-today:focus-visible{color:#895f28;background:#fff8e8}
+.alarm-item.reminder-today{box-shadow:inset 3px 0 #e5b45f;background:linear-gradient(90deg,#fff8ea,transparent 85%)}
+.alarm-item.reminder-today .alarm-main{padding-left:9px}
+.alarm-item.reminder-today .alarm-main strong{color:#9a5c20}
+.alarm-item.reminder-today .alarm-main small{color:#a07842}
