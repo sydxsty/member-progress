@@ -207,7 +207,9 @@ monthDay仅每月提醒填写，intervalDays仅间隔提醒填写，其余无关
 """;
             using var runtime = new CodexRuntime(Path.Combine(Path.GetDirectoryName(root)!, "assistant"), AppContext.BaseDirectory);
             var runner = new CodexRunner();
-            string raw = await runner.RunArchiveAsync(runtime.Executable, workspace, agentConnectionProvider!(), instructions, source.Token).ConfigureAwait(false);
+            await using var readSession = OpenReadSession?.Invoke(workspace, source.Token);
+            string raw = await runner.RunArchiveAsync(runtime.Executable, workspace, agentConnectionProvider!(),
+                instructions + (readSession == null ? "" : "\n" + AssistantReadSession.Instructions + "\n本轮新增消息是重点线索，可查其他历史帮助核对；每条新建议的 sourceMessageIds 只填写本轮新增消息中的 ID；其他历史仅供核对。"), source.Token).ConfigureAwait(false);
             var output = ParseSuggestionOutput(raw);
             var sources = messages.OfType<JsonObject>().ToDictionary(m => Text(m["id"]), m => m, StringComparer.Ordinal);
             var candidates = new List<JsonObject>();

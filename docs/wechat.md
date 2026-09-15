@@ -43,3 +43,6 @@ config.archiveFrom 是统一的文件自动归档起始日期（yyyy-MM-dd 或 a
 `--wechat-image-materials-test` 在隔离目录检查旧图升级、预览文件、归档补图及原生资料链路；`--wechat-image-live-test --connection-from <已有Data>` 仅借用已配置连接，使用合成图通过真实聊天链路做一次看图检查，不读取或发送真实微信消息/图片。
 
 方案依据：[UpXuu 的 V2 实测说明](https://upxuu.com/posts/wechat-dat-image-decrypt/)、[wxkey 的离线派生源码](https://github.com/r266-tech/wxkey/blob/01e96fa58ce3ff061dce83e4c36f62104ebc6b16/cmd/wxkey/imgkey.go)、[wechat-decrypt-rs 的媒体解码源码](https://github.com/H3CoF6/wechat-decrypt-rs/blob/185a95eaef24b9afedfb6fdee0c6282dc2ed2700/src/media_decrypt.rs)。实现只读当前 Windows 用户的本机文件，派生值不会发送到 GPT，也不进入备份或安装包。
+
+
+GPT 可通过只读接口自主查找 APP 已导入的微信资料，包括好友/群列表、按日期或文字查询的消息、向量搜索及原始文件。引用聊天或文件表示本次重点，未引用的相关资料也可以按需查阅；不会读取尚未导入的微信记录或向微信发送消息。

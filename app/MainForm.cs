@@ -51,6 +51,7 @@ public sealed partial class MainForm : Form
         }
         _notifications = new Notifications(dataRoot);
         InitializeWeChat();
+        InitializeAssistantReads();
         try
         {
             _mobileAccess = new MobileAccess(dataRoot);

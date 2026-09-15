@@ -116,6 +116,7 @@ public sealed partial class AppService : IDisposable
         using (var f = new FileStream(temp,FileMode.Create,FileAccess.Write,FileShare.None)) { f.Write(bytes); f.Flush(true); }
         if(File.Exists(path)) File.Replace(temp,path,Path.Combine(root,"state.previous.json"),true);
         else File.Move(temp,path);
+        assistantReadRevision++;
     }
 
     public JsonObject Snapshot()

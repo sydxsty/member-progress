@@ -37,7 +37,8 @@ internal sealed class CodexRunner
         foreach (string arg in new[] { "-a", "never", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules", "--sandbox", archiveMode ? "workspace-write" : "read-only", "--color", "never" })
             start.ArgumentList.Add(arg);
         // Archive sessions keep the CLI's native execution, image, planning and code-mode host defaults.
-        // Generic chat retains its original tool-free boundary.
+        // App chat with read access uses this mode too; callers without a read provider keep the
+        // legacy tool-free mode. Business writes always remain in the host's validated action path.
         string[] disabledFeatures = archiveMode
             ? ["multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use", "image_generation", "memories", "skill_search", "skill_mcp_dependency_install", "sleep_tool", "in_app_local_automation", "goals"]
             : ["shell_tool", "unified_exec", "multi_agent", "multi_agent_v2", "apps", "plugins", "hooks", "browser_use", "browser_use_external", "browser_use_full_cdp_access", "computer_use", "image_generation", "memories", "skill_search", "skill_mcp_dependency_install", "code_mode", "code_mode_host", "view_image", "sleep_tool", "workspace_dependencies", "in_app_local_automation", "goals"];

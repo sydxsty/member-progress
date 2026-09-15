@@ -257,21 +257,27 @@ public sealed partial class AssistantService : IDisposable
         JsonObject? context=null;
         string error="";
         string? materialsDirectory=null;
+        AssistantReadSession? readSession=null;
         try
         {
             request.Token.ThrowIfCancellationRequested();
             context=contextProvider(selection);
-            bool nativeMaterials = PrepareMaterialsAsync != null && (selection["references"] as JsonArray)?.Count > 0;
+            bool hasReferences = PrepareMaterialsAsync != null && (selection["references"] as JsonArray)?.Count > 0;
+            bool globalReads = ReadDataAsync != null;
+            bool nativeMaterials = hasReferences || globalReads;
             if (nativeMaterials)
             {
                 materialsDirectory=Path.Combine(workRoot,"materials-"+Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(materialsDirectory);
-                var materialContext=await PrepareMaterialsAsync!(selection,materialsDirectory,request.Token).ConfigureAwait(false);
+                var materialContext=hasReferences
+                    ?await PrepareMaterialsAsync!(selection,materialsDirectory,request.Token).ConfigureAwait(false)
+                    :new JsonObject { ["references"]=new JsonArray() };
                 AssistantJson.WriteAtomic(Path.Combine(materialsDirectory,"chat-history.json"),previous);
                 context["referencedArchives"]=materialContext["references"]?.DeepClone()??new JsonArray();
                 context["materials"]=materialContext;
+                if(globalReads)readSession=new AssistantReadSession(materialsDirectory,ReadApiDescription,ReadDataAsync!,request.Token);
             }
-            string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText,nativeMaterials);
+            string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText,nativeMaterials,globalReads,selection);
             string output=responseProvider!=null
                 ?await responseProvider(prompt,request.Token).ConfigureAwait(false)
                 :nativeMaterials
@@ -285,6 +291,11 @@ public sealed partial class AssistantService : IDisposable
         catch{error="GPT 暂时无法完成回答，问题已保留，请重试。";}
         finally
         {
+            if(readSession!=null)
+            {
+                await readSession.DisposeAsync().ConfigureAwait(false);
+                if(readSession.Failure.Length>0){response=null;error=readSession.Failure;}
+            }
             if(materialsDirectory!=null)try{Directory.Delete(materialsDirectory,true);}catch(IOException){}catch(UnauthorizedAccessException){}
         }
         lock(sync)

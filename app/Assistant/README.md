@@ -1,12 +1,12 @@
 # 独立 GPT 聊天模块
 
-本模块使用内置的官方 Codex CLI，依据应用提供的资料回答问题、给建议，并在当前问题明确要求时提议创建简单提醒或任务。模块不直接依赖 AppService；创建只通过宿主提供的原子委托执行。
+本模块使用内置的官方 Codex CLI，通过应用只读接口自主查找资料、回答问题和给建议，并在当前问题明确要求时提议创建简单提醒或任务。模块不直接依赖 AppService；创建只通过宿主提供的原子委托执行。
 
 ## 边界
 
 - AssistantService：聊天持久化、请求/取消、可撤销清空、内核检查更新及状态事件。
 - CodexRunner / CodexEvents：结构化参数启动 CLI、读取 JSONL；AssistantResponse 严格解析 text/reminders/tasks 信封，界面只见自然语言与实际保存的提醒、任务卡片。密钥通过单独的子进程环境变量传入。
-- AssistantPrompt：最近对话与业务上下文组合。自动最近归档允许带标记压缩，显式整份引用不截断；超过总输入限制时明确拒绝发送。
+- AssistantPrompt：最近对话与业务上下文组合。普通聊天提供当前身份、问题、重点资料与查询入口；全库内容按需检索、分页读取，不在每次请求中全部展开。
 - CodexRuntime：官方 Windows 包的版本发现、SHA512 校验、安全解包、版本校验和启用；失败保留原版。
 - web/assistant.js、assistant.css：模块自己的界面与状态，不抢占成员页面，不接管原归档聊天。
 - AppService.AssistantContext.cs：核心业务上下文适配器；AppService.AssistantActions 负责原子校验、创建和按请求 id 去重。MainForm 通过委托连接双方，路由 assistant.*，单独发送 assistant 状态事件。
@@ -17,9 +17,9 @@ Data/assistant/history.json 保存当前聊天及最近一次可撤销清空的�
 
 运行时和工作目录在 Data/assistant/runtime、work，不进入资料备份。初始内核位于应用 runtime/codex，由 bundled.json 指向版本 0.154.0 的 Windows 可执行文件。自动更新默认关闭；开启后由宿主定时触发、每日空闲时最多检查一次。
 
-连接配置来自核心业务的 GetAssistantConnection，仅在 C# 内部传递，不出现在前端快照或聊天历史。CLI 忽略用户的全局配置及规则，禁用不必要工具，以只读模式运行，不改写用户的 CODEX_HOME 或全局 Codex 配置。
+连接配置来自核心业务的 GetAssistantConnection，仅在 C# 内部传递，不出现在前端快照或聊天历史。CLI 忽略用户的全局配置及规则，禁用不必要工具，使用 Windows 无提权 workspace-write 沙箱分析临时资料，业务接口只读，不改写用户的 CODEX_HOME 或全局 Codex 配置。
 
-归档中的“引用整个归档”只把引用加入聊天，等待用户输入问题，不会自动发送。后续提问保留所选引用，每次取当前归档内容。自动参考可分别关闭“全部提醒”和“最近归档”。
+归档中的“引用整个归档”只把引用加入聊天，等待用户输入问题，不会自动发送。后续提问保留所选引用，每次取当前归档内容。“全部提醒”“最近归档”和引用是关注重点；关闭重点开关不会撤销按需查询权限。
 
 ## 验证与来源
 
@@ -53,3 +53,34 @@ Responses 归档由 `AppService.Documents.cs` 准备隔离资料副本，`CodexR
 ## 微信及原始资料引用（v11）
 
 AssistantReference 增加 scopeType=wechat，scopeId为模块生成的稳定引用ID。宿主按来源拆分业务与微信引用；PrepareMaterialsAsync委托将原始消息/文件放入一次性资料目录。带显式资料引用的聊天使用原生Codex工具和完整chat-history.json，保留原有最终任务/提醒输出验证。只读资料准备不会触发创建；微信自动分析单独保留候选，点击创建才通过同一个宿主回执接口提交。
+
+
+## 全库自主查询（v14）
+
+普通聊天、归档摘要、微信提醒分析均可使用 `AssistantReadSession`。宿主通过 `ReadDataAsync` 委托提供只读查询，和现有 `reminderCreator` 写入委托分开；不把通用 UI RPC 暴露给模型。手机聊天共用此宿主能力。
+
+Agent 工作目录提供 `app-read-api.json` 和 `app-read.ps1`，列出接口、参数和分页方式。Codex 使用原生 shell 调用，自己决定查询顺序、检索方式及是否阅读附件，没有新增 Agent 调度循环、MCP 或固定分析流程。文件请求/响应仅存在本次临时工作目录，结束或取消后停止服务并清理；不监听端口、不扩大网络权限。执行方式：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ./app-read.ps1 help
+powershell -NoProfile -ExecutionPolicy Bypass -File ./app-read.ps1 app.observe '{}'
+# 复杂中文参数可先存为 UTF-8 JSON 文件；长结果直接保存完整 JSON。
+powershell -NoProfile -ExecutionPolicy Bypass -File ./app-read.ps1 wechat.search -ArgumentsFile query.json -OutFile results.json
+```
+
+| 接口 | 内容 |
+| --- | --- |
+| `app.observe` | 当前身份、时间、全局记录数量和入口 |
+| `app.members`、`app.projects` | 成员（含已归档）、项目、研究进展及关联 |
+| `app.tasks`、`app.reminders` | 日期/状态筛选，重复提醒规则或指定日期范围的待提醒实例 |
+| `app.archives`、`app.archive` | 归档目录、按对象完整分页原文和附件 ID |
+| `app.search`、`app.file` | 跨业务文字/附件预览检索，按需取得原始文件及图像 |
+| `wechat.observe`、`wechat.conversations` | 导入范围、同步和索引覆盖、好友/群列表及查找 |
+| `wechat.search` | 复用 BGE-M3 和现有关键词/向量混合检索 |
+| `wechat.messages`、`wechat.message` | 全库或单会话的原消息、日期和文字过滤、稳定游标分页、命中前后文 |
+| `wechat.files`、`wechat.file` | 附件检索、文档原件和已解码图片的按需副本 |
+| `assistant.history` | 当前未清空 GPT 会话的完整历史，可搜索分页 |
+
+引用只是重点线索，不是权限边界。检索结果包含来源 ID、消息时间、分页游标或覆盖情况；语义命中是候选，Agent 需核对原消息和文件再下结论。未同步到 APP 的微信内容不能通过这些接口读取。附件接口只向临时目录复制所需原件，图片仍由原生 `view_image` 阅读；未成功解码的图片明确返回不可读状态。派生向量索引可以维护，不修改来源消息、成员、任务或提醒。
+
+`AssistantReadChecks` 集中检查分页、原件、只读边界、中文 PowerShell 传输与故障收尾；`AssistantReadLiveCheck` 是显式启用的一次真实 Codex 联调，只使用合成资料且不带预选引用。

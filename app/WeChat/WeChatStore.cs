@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 namespace StudentProgress.WeChat;
 
 // This database contains only WeChat material; no host business state or credentials.
-internal sealed class WeChatStore : IDisposable
+internal sealed partial class WeChatStore : IDisposable
 {
     readonly object gate = new();
     readonly string databasePath;

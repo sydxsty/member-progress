@@ -214,7 +214,7 @@ public sealed partial class WeChatService : IDisposable
             var when=DateTimeOffset.Parse(S(message,"when"));if(from!=default&&when<from||to!=default&&when>=to.AddDays(1))continue;
             var resultKey=S(message,"id")+":"+S(chunk,"fileId");if(!seen.Add(resultKey))continue;message["score"]=score;message["excerpt"]=S(chunk,"text");message["fileId"]=S(chunk,"fileId");message["conversationName"]=S(store.Conversation(S(message,"conversationId")),"name");results.Add(message);if(results.Count>=Math.Clamp(I(payload,"limit",30),1,100))break;
         }
-        _=IndexInBackgroundAsync();return new(){["results"]=results,["warning"]=warning,["indexing"]=store.Counts()["chunks"]!.GetValue<long>()>store.Counts()["indexed"]!.GetValue<long>()};
+        _=IndexInBackgroundAsync();return new(){["results"]=results,["warning"]=warning,["indexing"]=store.Counts()["chunks"]!.GetValue<long>()>store.Counts()["indexed"]!.GetValue<long>(),["keywordCandidateCount"]=keyword.Count,["semanticCandidateCount"]=semantic.Count};
     }
     public async Task PauseForRestoreAsync(){paused=true;await syncGate.WaitAsync();await indexGate.WaitAsync();}
     public void ResumeAfterRestore(){lock(gate){config=ReadConfig();store.Reload();embedding.Reset();}indexGate.Release();syncGate.Release();paused=false;Changed();}
