@@ -2,10 +2,12 @@ package dat2img
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/bits"
@@ -25,15 +27,12 @@ var (
 	FFMpegPath = "ffmpeg"
 )
 
-func init() {
-	ffmpegPath := os.Getenv(ENV_FFMPEG_PATH)
-	if len(ffmpegPath) > 0 {
-		FFmpegMode = true
-		FFMpegPath = ffmpegPath
-	}
-	if isFFmpegAvailable() {
-		FFmpegMode = true
-	}
+// ConfigureFFmpeg only enables the bundled converter selected by the caller.
+// No executable is resolved from PATH or downloaded while reading messages.
+func ConfigureFFmpeg(path string) {
+	FFMpegPath = path
+	st, err := os.Stat(path)
+	FFmpegMode = err == nil && !st.IsDir()
 }
 
 func Wxam2pic(data []byte) ([]byte, string, error) {
@@ -169,30 +168,24 @@ func findDataPartition(data []byte) (*Partitions, error) {
 	return nil, fmt.Errorf("no partition found")
 }
 
-func Convert2JPG(data []byte) ([]byte, error) {
-	cmd := exec.Command(FFMpegPath,
-		"-i", "-",
-		"-vframes", "1",
-		"-c:v", "mjpeg",
-		"-q:v", "4",
-		"-f", "image2",
-		"-")
-
+func Convert2JPG(data []byte) ([]byte, error) { return convertRaster(data, "mjpeg") }
+func Convert2PNG(data []byte) ([]byte, error) { return convertRaster(data, "png") }
+func convertRaster(data []byte, codec string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, FFMpegPath, "-loglevel", "error", "-threads", "2", "-i", "-", "-vframes", "1", "-c:v", codec, "-q:v", "4", "-f", "image2pipe", "-")
+	prepareCommand(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("ffmpeg failed: %w", err)
+		return nil, fmt.Errorf("image conversion failed: %w", err)
 	}
-
-	jpegData := stdout.Bytes()
-	if len(jpegData) == 0 {
-		return nil, fmt.Errorf("ffmpeg output is empty")
+	if stdout.Len() == 0 {
+		return nil, fmt.Errorf("image conversion output is empty")
 	}
-
-	return jpegData, nil
+	return stdout.Bytes(), nil
 }
 
 func writeTempFile(data [][]byte) (string, error) {
@@ -226,13 +219,16 @@ func ConvertAnime2GIF(animeFrames [][]byte, maskFrames [][]byte) ([]byte, error)
 	}
 	defer os.Remove(maskFilePath)
 
-	cmd := exec.Command(FFMpegPath,
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, FFMpegPath,
 		"-i", animeFilePath,
 		"-i", maskFilePath,
 		"-filter_complex", "[0:v][1:v]alphamerge,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
 		"-f", "gif",
 		"-")
 
+	prepareCommand(cmd)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

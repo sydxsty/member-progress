@@ -43,7 +43,7 @@ public sealed partial class WeChatService
                 if(!File.Exists(Path.Combine(workspace,"records.sqlite")))throw new InvalidDataException("微信资料备份缺少记录库。");
                 using(var candidate=new WeChatStore(workspace))
                 {
-                    foreach(var f in candidate.ArchiveCandidates().OfType<JsonObject>()){var stored=S(f,"storedName");if(stored.Length>0&&(stored!=Path.GetFileName(stored)||!File.Exists(Path.Combine(workspace,"files",stored))))throw new InvalidDataException("微信资料备份缺少原始文件。");}
+                    foreach(var f in candidate.ArchiveCandidates().OfType<JsonObject>())foreach(var field in new[]{"storedName","originalStoredName"}){var stored=S(f,field);if(stored.Length>0&&(stored!=Path.GetFileName(stored)||stored.Contains('\\')||!File.Exists(Path.Combine(workspace,"files",stored))))throw new InvalidDataException("微信资料备份缺少原始文件。");}
                     candidate.BackupTo(Path.Combine(workspace,"validated.sqlite"));
                 }
                 // Content-addressed existing originals remain in place; restore only adds missing originals.

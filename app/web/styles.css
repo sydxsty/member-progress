@@ -69,3 +69,5 @@
 .student-heading>.inline-currentSummary{flex:1 1 0;min-width:0;overflow:hidden}
 .student-heading>.inline-currentSummary.is-editing{overflow:visible}
 .student-heading>.member-reminders{flex:0 0 auto;max-width:96px}
+
+.attachment-card.with-image{display:flex;flex-direction:column;align-items:flex-start;max-width:290px}.attachment-card .archive-image{display:block;max-width:100%;width:auto;height:auto;max-height:210px;object-fit:contain;border-radius:5px;background:#f5f7fa}.attachment-card.with-image .attachment-info{width:100%;white-space:normal}

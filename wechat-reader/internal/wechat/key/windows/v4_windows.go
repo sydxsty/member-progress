@@ -167,7 +167,30 @@ func relatedWeixinPIDs(rootPID uint32) []uint32 {
 		}
 	}
 
+	// Account discovery may select a database worker. Start at the owning
+	// Weixin ancestor so image keys in its siblings remain visible.
 	selected := map[uint32]bool{rootPID: true}
+	for current := rootPID; ; {
+		parent := uint32(0)
+		for _, item := range entries {
+			if item.pid == current {
+				parent = item.parent
+				break
+			}
+		}
+		own := false
+		for _, item := range entries {
+			if item.pid == parent && item.name == "weixin" {
+				own = true
+				break
+			}
+		}
+		if !own || selected[parent] {
+			break
+		}
+		selected[parent] = true
+		current = parent
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, item := range entries {
@@ -219,8 +242,8 @@ func (e *V4Extractor) findMemory(ctx context.Context, pid uint32, handle windows
 					}
 				}
 				advance := chunkSize
-				if chunkStart+chunkSize < regionEnd && advance > uintptr(len(v4KeyPattern)+8-1) {
-					advance -= uintptr(len(v4KeyPattern) + 8 - 1)
+				if chunkStart+chunkSize < regionEnd && advance > uintptr(len(v4KeyPattern)+8) {
+					advance -= uintptr(len(v4KeyPattern) + 8)
 				}
 				chunkStart += advance
 			}

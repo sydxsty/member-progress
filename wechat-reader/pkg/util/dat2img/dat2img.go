@@ -32,7 +32,8 @@ var (
 	TIFF    = Format{Header: []byte{0x49, 0x49, 0x2A, 0x00}, Ext: "tiff"}
 	BMP     = Format{Header: []byte{0x42, 0x4D}, Ext: "bmp"}
 	WXGF    = Format{Header: []byte{0x77, 0x78, 0x67, 0x66}, Ext: "wxgf"}
-	Formats = []Format{JPG, PNG, GIF, TIFF, BMP, WXGF}
+	WEBP    = Format{Header: []byte("RIFF"), Ext: "webp"}
+	Formats = []Format{PNG, GIF, TIFF, WXGF, WEBP, JPG, BMP}
 
 	V4Format1 = Format{Header: []byte{0x07, 0x08, 0x56, 0x31}, AesKey: []byte("cfcd208495d565ef")}
 	V4Format2 = Format{Header: []byte{0x07, 0x08, 0x56, 0x32}, AesKey: []byte("0000000000000000")} // FIXME
@@ -63,7 +64,7 @@ func Dat2Image(data []byte) ([]byte, string, error) {
 	findFormat := func(data []byte, header []byte) bool {
 		xorBit := data[0] ^ header[0]
 		for i := 0; i < len(header); i++ {
-			if data[i]^header[i] != xorBit {
+			if i >= len(data) || data[i]^header[i] != xorBit {
 				return false
 			}
 		}
@@ -91,6 +92,14 @@ func Dat2Image(data []byte) ([]byte, string, error) {
 		out[i] = data[i] ^ xorBit
 	}
 
+	if ext == "bmp" {
+		if len(out) < 26 || binary.LittleEndian.Uint32(out[2:6]) != uint32(len(out)) {
+			return nil, "", fmt.Errorf("invalid BMP image")
+		}
+	}
+	if ext == "wxgf" {
+		return Wxam2pic(out)
+	}
 	return out, ext, nil
 }
 
@@ -222,47 +231,49 @@ func Dat2ImageV4(data []byte, aeskey []byte) ([]byte, string, error) {
 	// Data after header
 	fileData := data[15:]
 
-	// AES encrypted part (max 1KB)
-	// Round up to multiple of 16 bytes for AES block size
-	aesEncryptLen0 := (aesEncryptLen)/16*16 + 16
-	if aesEncryptLen0 > uint32(len(fileData)) {
-		aesEncryptLen0 = uint32(len(fileData))
+	// Header lengths are untrusted. Reject truncated/overlapping spans rather
+	// than slicing underflowed uint32 offsets or returning corrupt pixels.
+	aesSpan := (uint64(aesEncryptLen)/16 + 1) * 16
+	if aesSpan > uint64(len(fileData)) || uint64(xorEncryptLen) > uint64(len(fileData))-aesSpan {
+		return nil, "", fmt.Errorf("invalid image encryption lengths")
 	}
-
-	// Decrypt AES part
-	aesDecryptedData, err := decryptAESECB(fileData[:aesEncryptLen0], aeskey)
-	if err != nil {
-		return nil, "", fmt.Errorf("AES decrypt error: %v", err)
+	aesDecryptedData, err := decryptAESECB(fileData[:int(aesSpan)], aeskey)
+	if err != nil || len(aesDecryptedData) < int(aesEncryptLen) {
+		return nil, "", fmt.Errorf("image AES decode failed")
 	}
-
-	// Prepare result buffer
-	var result []byte
-
-	// Add decrypted AES part (remove padding if necessary)
-	if len(aesDecryptedData) > int(aesEncryptLen) {
-		result = append(result, aesDecryptedData[:aesEncryptLen]...)
-	} else {
-		result = append(result, aesDecryptedData...)
+	result := append([]byte{}, aesDecryptedData[:int(aesEncryptLen)]...)
+	middleEnd := len(fileData) - int(xorEncryptLen)
+	result = append(result, fileData[int(aesSpan):middleEnd]...)
+	xorKey := V4XorKey
+	// JPEG/GIF/PNG have a known trailer, allowing exact per-file XOR recovery
+	// without relying on another conversation's thumbnail or an old default.
+	var trailers [][]byte
+	if bytes.HasPrefix(result, JPG.Header) {
+		trailers = [][]byte{JpgTail}
 	}
-
-	// Add unencrypted middle part
-	middleStart := aesEncryptLen0
-	middleEnd := uint32(len(fileData)) - xorEncryptLen
-	if middleStart < middleEnd {
-		result = append(result, fileData[middleStart:middleEnd]...)
+	if bytes.HasPrefix(result, PNG.Header) {
+		trailers = [][]byte{{0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82}}
 	}
-
-	// Process XOR-encrypted part (file tail)
-	if xorEncryptLen > 0 && middleEnd < uint32(len(fileData)) {
-		xorData := fileData[middleEnd:]
-
-		// Apply XOR decryption using global key
-		xorDecrypted := make([]byte, len(xorData))
-		for i := range xorData {
-			xorDecrypted[i] = xorData[i] ^ V4XorKey
+	for _, trailer := range trailers {
+		if len(trailer) > int(xorEncryptLen) {
+			continue
 		}
-
-		result = append(result, xorDecrypted...)
+		tail := fileData[len(fileData)-len(trailer):]
+		candidate := tail[0] ^ trailer[0]
+		valid := true
+		for i := range trailer {
+			if tail[i]^trailer[i] != candidate {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			xorKey = candidate
+			break
+		}
+	}
+	for _, b := range fileData[middleEnd:] {
+		result = append(result, b^xorKey)
 	}
 
 	// Identify image type from decrypted data

@@ -16,10 +16,15 @@ public sealed partial class AppService
             string requestId = Required(payload, "requestId", 500);
             string messageId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("wechat:" + requestId))).ToLowerInvariant()[..32];
             var existing = AllArchiveMessages(state).FirstOrDefault(m => S(m, "id") == messageId);
-            if (existing != null)
+            // Late image decoding can add readable files to the same visible archive. A deleted
+            // entry remains a tombstone; neither automatic sync nor an explicit reimport revives it.
+            bool refresh = existing != null && B(payload, "refreshFiles") && Rows("messages").Any(m => S(m, "id") == messageId);
+            if (existing != null && !refresh)
                 return new JsonObject { ["messageId"] = messageId, ["scopeType"] = S(existing, "scopeType"), ["scopeId"] = S(existing, "scopeId"), ["replayed"] = true };
             string type = Required(payload, "scopeType"), id = Required(payload, "scopeId");
             Scope(type, id);
+            if (existing != null && (S(existing, "scopeType") != type || S(existing, "scopeId") != id || S(existing, "sourceType") != "wechat"))
+                throw new InvalidOperationException("微信归档来源不一致。");
             string text = S(payload, "text");
             var files = payload["files"] as JsonArray ?? new();
             if (text.Length == 0 && files.Count == 0) throw new InvalidOperationException("没有可归档的微信内容。");
@@ -29,7 +34,8 @@ public sealed partial class AppService
                 if (S(reference, "scopeType") != "wechat") throw new InvalidOperationException("微信来源引用无效。");
                 refs.Add(new JsonObject { ["scopeType"] = "wechat", ["scopeId"] = Required(reference, "scopeId", 500), ["title"] = S(reference, "title") });
             }
-            var attachments = new JsonArray();
+            var attachments = (existing?["attachments"]?.DeepClone() as JsonArray) ?? new JsonArray();
+            int beforeCount = attachments.Count;
             var staged = new List<string>();
             var previous = (JsonObject)state.DeepClone();
             try
@@ -49,6 +55,7 @@ public sealed partial class AppService
                     string hash;
                     using (var source = File.OpenRead(path)) hash = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
                     string stored = "wx-" + hash + extension;
+                    if (attachments.OfType<JsonObject>().Any(a => S(a, "storedName") == stored)) continue;
                     string destination = Path.Combine(root, "attachments", stored);
                     if (!File.Exists(destination))
                     {
@@ -58,8 +65,18 @@ public sealed partial class AppService
                     }
                     var info = new FileInfo(destination);
                     attachments.Add(new JsonObject { ["id"] = NewId(), ["name"] = name, ["storedName"] = stored,
-                        ["size"] = info.Length, ["mime"] = S(file, "mime", "application/octet-stream"), ["textStatus"] = "原文件已归档", ["extractedText"] = "" });
+                        ["sourceFileId"] = S(file, "id"), ["size"] = info.Length, ["mime"] = S(file, "mime", "application/octet-stream"), ["textStatus"] = "原文件已归档", ["extractedText"] = "" });
                 }
+                if (existing != null)
+                {
+                    if (attachments.Count == beforeCount) return new JsonObject { ["messageId"] = messageId, ["scopeType"] = type, ["scopeId"] = id, ["replayed"] = true };
+                    existing["attachments"] = attachments;
+                    existing["attachmentsUpdatedAt"] = Now();
+                    Save();
+                    result = new JsonObject { ["messageId"] = messageId, ["scopeType"] = type, ["scopeId"] = id, ["replayed"] = true, ["filesUpdated"] = attachments.Count - beforeCount };
+                }
+                else
+                {
                 string time = DateTimeOffset.TryParse(S(payload, "createdAt"), out var at) ? at.ToString("O") : Now();
                 var message = new JsonObject { ["id"] = messageId, ["scopeType"] = type, ["scopeId"] = id, ["role"] = "user",
                     ["text"] = text, ["createdAt"] = time, ["importedAt"] = Now(), ["sourceType"] = "wechat", ["sourceReferences"] = refs,
@@ -70,6 +87,7 @@ public sealed partial class AppService
                 messages.Insert(insert, message);
                 Save();
                 result = new JsonObject { ["messageId"] = messageId, ["scopeType"] = type, ["scopeId"] = id, ["replayed"] = false };
+                }
             }
             catch
             {

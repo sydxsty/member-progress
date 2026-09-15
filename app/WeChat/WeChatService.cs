@@ -113,7 +113,7 @@ public sealed partial class WeChatService : IDisposable
         {
             case "wechat.get":case "wechat.state":return Snapshot();
             case "wechat.connect":await ConnectAsync(cancellation);return Snapshot();
-            case "wechat.sync":await SyncAsync(cancellation);return Snapshot();
+            case "wechat.sync":await SyncAsync(cancellation,refreshImages:true);return Snapshot();
             case "wechat.settings.save":SaveConfiguration(payload["config"] as JsonObject??payload);return Snapshot();
             case "wechat.binding.save":
                 var b=ValidateBinding(payload);lock(gate){var rows=(config["bindings"] as JsonArray??new());var old=rows.OfType<JsonObject>().FirstOrDefault(x=>S(x,"conversationId")==S(b,"conversationId"));if(old!=null)rows.Remove(old);if(S(b,"memberId").Length>0||S(b,"projectId").Length>0)rows.Add(b);config["bindings"]=rows;SaveConfig();}await ArchiveFilesAsync(cancellation);Changed();return Snapshot();
@@ -158,7 +158,7 @@ public sealed partial class WeChatService : IDisposable
         catch(Exception e)when(e is not OperationCanceledException){SetStatus("error","连接微信未完成",e.Message);throw;}finally{syncGate.Release();}
     }
     async Task BackgroundSyncAsync(){try{await SyncAsync(lifetime.Token);}catch(OperationCanceledException){}catch{}}
-    public async Task SyncAsync(CancellationToken ct=default)
+    public async Task SyncAsync(CancellationToken ct=default,bool refreshImages=false)
     {
         if(paused)return;using var linked=CancellationTokenSource.CreateLinkedTokenSource(ct,lifetime.Token);ct=linked.Token;if(!await syncGate.WaitAsync(0,ct))return;
         try
@@ -171,13 +171,13 @@ public sealed partial class WeChatService : IDisposable
                 try
                 {
                     var args=new List<string>{"read","--account",group.Key,"--output",workspace,"--cache",Path.Combine(root,"reader-cache")};foreach(var c in group){args.Add("--conversation");args.Add(S(c,"externalId"));}
-                    var readResult=await ReaderAsync(args,ct);if(readResult["complete"] is JsonValue complete&&complete.TryGetValue<bool>(out var isComplete)&&!isComplete)throw new InvalidOperationException("微信本次读取未完成，将保留上次结果并重试。");await ImportContactsAsync(Path.Combine(workspace,"contacts.json"),group.Key,ct);
+                    if(refreshImages)args.Add("--refresh-images");var readResult=await ReaderAsync(args,ct);if(readResult["complete"] is JsonValue complete&&complete.TryGetValue<bool>(out var isComplete)&&!isComplete)throw new InvalidOperationException("微信本次读取未完成，将保留上次结果并重试。");await ImportContactsAsync(Path.Combine(workspace,"contacts.json"),group.Key,ct);
                     var records=Path.Combine(workspace,"messages.jsonl");if(!File.Exists(records))throw new InvalidDataException("微信读取组件未生成聊天记录。");
                     using var reader=new StreamReader(records,Encoding.UTF8);while(await reader.ReadLineAsync(ct) is string line){ct.ThrowIfCancellationRequested();if(string.IsNullOrWhiteSpace(line))continue;var raw=JsonNode.Parse(line)!.AsObject();var convId=WeChatStore.Stable(group.Key,S(raw,"conversationId"));if(!selected.Contains(convId))continue;var message=NormalizeMessage(raw,group.Key,convId);if(store.UpsertMessage(message))changed++;await ImportFilesAsync(raw,message,ct);}
                 }
                 finally{try{Directory.Delete(workspace,true);}catch{}}
             }
-            await ArchiveFilesAsync(ct);store.SetMeta("lastSync",DateTimeOffset.Now.ToString("O"));if(changed>0)store.SetMeta("lastImport",DateTimeOffset.UtcNow.ToString("O"));SetStatus("idle",changed>0?$"已同步 {changed} 条新增或更新记录":"已同步");_ = IndexInBackgroundAsync();
+            await ArchiveFilesAsync(ct);await BackfillReferencedImagesAsync(ct);store.SetMeta("lastSync",DateTimeOffset.Now.ToString("O"));if(changed>0)store.SetMeta("lastImport",DateTimeOffset.UtcNow.ToString("O"));SetStatus("idle",changed>0?$"已同步 {changed} 条新增或更新记录":"已同步");_ = IndexInBackgroundAsync();
         }
         catch(Exception e)when(e is not OperationCanceledException){SetStatus("error","同步暂未完成，将自动重试",e.Message);throw;}
         finally{syncGate.Release();}
@@ -186,23 +186,6 @@ public sealed partial class WeChatService : IDisposable
     {
         var time=S(raw,"time");if(!DateTimeOffset.TryParse(time,out var when))when=DateTimeOffset.FromUnixTimeSeconds(Long(raw,"timestamp",0));var extId=S(raw,"id");if(extId.Length==0)throw new InvalidDataException("微信读取组件返回了缺少稳定标识的消息。");
         return new(){["id"]=store.CanonicalMessageId(accountId,conversationId,extId,S(raw["source"],"serverId")),["externalId"]=extId,["accountId"]=accountId,["conversationId"]=conversationId,["senderId"]=S(raw,"senderId"),["senderName"]=S(raw,"senderName"),["isSelf"]=B(raw,"isSelf"),["when"]=when.ToString("O"),["kind"]=S(raw,"type","text"),["text"]=S(raw,"text"),["rawContent"]=S(raw,"rawContent"),["source"]=raw["source"]?.DeepClone()};
-    }
-    async Task ImportFilesAsync(JsonObject raw,JsonObject message,CancellationToken ct)
-    {
-        int ordinal=0;foreach(var original in (raw["attachments"] as JsonArray??new()).OfType<JsonObject>())
-        {
-            ct.ThrowIfCancellationRequested();var name=Path.GetFileName(S(original,"name","文件"));var id=WeChatStore.Stable(S(message,"id"),name,(ordinal++).ToString());var src=S(original,"path");string stored="",hash="",extracted="";long size=Long(original,"size",0);var old=store.File(id,true);
-            if(old!=null&&S(old,"storedName").Length>0&&File.Exists(StoredPath(S(old,"storedName"))))continue;
-            if(src.Length>0&&File.Exists(src))try
-            {
-                var temporary=Path.Combine(root,"files",Guid.NewGuid().ToString("N")+".copying");
-                try{await using(var from=new FileStream(src,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete,81920,true))await using(var to=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None,81920,true)){var length=from.Length;await from.CopyToAsync(to,ct);if(from.Length!=length||to.Length!=length)throw new IOException("微信文件仍在写入，稍后重试。");size=to.Length;}
-                    await using(var input=File.OpenRead(temporary))hash=Convert.ToHexString(await SHA256.HashDataAsync(input,ct)).ToLowerInvariant();var ext=Path.GetExtension(name);if(ext.Length>20||ext.Any(c=>!char.IsLetterOrDigit(c)&&c!='.'))ext="";stored=hash+ext.ToLowerInvariant();var dest=StoredPath(stored);if(File.Exists(dest))File.Delete(temporary);else File.Move(temporary,dest);
-                    if(size<=64L*1024*1024&&new[]{".txt",".md",".markdown",".csv",".pdf",".docx",".pptx"}.Contains(ext.ToLowerInvariant()))extracted=AttachmentText.ExtractFull(await File.ReadAllBytesAsync(dest,ct),ext,ct).Text;
-                }finally{if(File.Exists(temporary))File.Delete(temporary);}
-            }catch(IOException){}catch(UnauthorizedAccessException){}
-            var f=new JsonObject{["id"]=id,["messageId"]=S(message,"id"),["name"]=name,["size"]=size,["type"]=S(original,"type"),["status"]=S(original,"status"),["available"]=stored.Length>0};store.UpsertFile(f,src,stored,hash,extracted);
-        }
     }
     internal string StoredPath(string name)
     {

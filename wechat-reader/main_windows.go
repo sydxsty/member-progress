@@ -20,6 +20,7 @@ import (
 	keywindows "github.com/sjzar/chatlog/internal/wechat/key/windows"
 	"github.com/sjzar/chatlog/internal/wechat/model"
 	processwindows "github.com/sjzar/chatlog/internal/wechat/process/windows"
+	"github.com/sjzar/chatlog/pkg/util/dat2img"
 	"golang.org/x/sys/windows"
 )
 
@@ -60,6 +61,9 @@ func accounts() ([]Account, error) {
 	return out, nil
 }
 func main() {
+	if exe, err := os.Executable(); err == nil {
+		dat2img.ConfigureFFmpeg(filepath.Join(filepath.Dir(exe), "ffmpeg.exe"))
+	}
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 	log.Logger = zerolog.New(io.Discard)
 	if len(os.Args) < 2 {
@@ -83,6 +87,7 @@ func main() {
 	cache := fs.String("cache", "", "")
 	contactsOnly := fs.Bool("contacts-only", false, "")
 	all := fs.Bool("all", false, "")
+	refreshImages := fs.Bool("refresh-images", false, "")
 	var conversations repeated
 	fs.Var(&conversations, "conversation", "")
 	if fs.Parse(os.Args[2:]) != nil {
@@ -133,7 +138,7 @@ func main() {
 		fail("key_unavailable", "当前微信版本的只读连接暂未成功；请保持微信登录后重试")
 	}
 	defer clear(key)
-	counts, e := export(ctx, selected, *output, *cache, key, conversations, *contactsOnly, *all)
+	counts, e := export(ctx, selected, *output, *cache, key, conversations, *contactsOnly, *all, *refreshImages)
 	if e != nil {
 		if diag := os.Getenv("MEMBER_WECHAT_DIAGNOSTIC"); diag != "" {
 			_ = os.WriteFile(diag, []byte(e.Error()), 0600)

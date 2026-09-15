@@ -123,6 +123,7 @@ public sealed partial class MainForm : Form
             core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
             core.WebResourceRequested += (_, e) =>
             {
+                if (TryServeImage(e, environment)) return;
                 if (Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri) &&
                     (uri.Scheme == "http" || uri.Scheme == "https") && !IsTrusted(uri.AbsoluteUri))
                     e.Response = environment.CreateWebResourceResponse(Stream.Null, 403, "Forbidden", "Content-Type: text/plain");

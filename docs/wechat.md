@@ -24,10 +24,22 @@ Data/wechat/records.sqlite 保存选定会话、原始消息、附件元数据�
 
 ## 已知边界
 
-电脑未保存的记录/文件无法凭空取得；微信加密图片的加密原件会保留并标注，当前不声称全部图像可解码。微信版本变化可能需要更新读取适配器，不影响已经导入的资料。后台索引未完成时继续提供关键词检索及完成状态。
+电脑未保存的记录/文件无法凭空取得；图片会实际尝试格式识别和解码，只有成功解码的图像才用于预览，暂未成功的原件保留并在后续同步重试。微信版本变化可能需要更新读取适配器，不影响已经导入的资料。后台索引未完成时继续提供关键词检索及完成状态。
 
 ## v12 设置与会话更新
 
 config.archiveFrom 是统一的文件自动归档起始日期（yyyy-MM-dd 或 all），bindings 只保存成员/项目关联。升级旧配置取最早日期，任意旧配置为全部历史则沿用全部历史；原配置保留为 config.pre-global-date.json。零消息会话仅在聊天列表隐藏，同步选择仍保留。读取器从 SessionTable.last_timestamp 提供 sourceLastMessageAt，供尚未导入的会话排序。
 
 修复检查入口 --wechat-revision-test 验证日期迁移、跨会话归档边界及源时间排序，不调用模型。已有v11完整模型的电脑可用 SkipBundledEmbedding=true 发布更新包，更新程序保留目标目录的既有模型；新安装仍使用默认完整发布。
+
+## v13 图片预览和原始图像分析
+
+图片解码在只读读取器中完成，输出可识别的 JPG/PNG/GIF 等文件。V2 首选从本机 kvcomm 统计文件名与账号标识离线派生 AES/XOR 密钥，先用实际图片验证再使用；已验证结果按账号经 DPAPI 缓存。旧 XOR/V1 文件按对应格式解码，wxgf 在读取器私有缓存中转为可显示图像。微信聊天、文件列表及业务归档展示缩略图，点击微信图片在 APP 内看大图。宿主按附件 ID 和实际文件头提供图片流，不把本地目录暴露给前端。
+
+已有 `.dat` 附件在同步后沿用原附件 ID 补齐图像，保留加密原件；暂时读不到密钥不会覆盖已有可读副本。进入归档的图片在同一条记录内补充，重复同步不增加重复归档，删除的归档不复活。微信资料单独导出时同时包含解码图像及原件，不包含图片密钥缓存。
+
+引用图片或包含图片的聊天到 GPT 时，材料清单中的 `file` 指向可读图片，`originalFile` 单独指向加密或封装原件。复用现有 Codex 与 GPT 接口自主查看图片，不以文件名、文字摘要或向量结果代替图像内容，也不增加本地视觉模型。
+
+`--wechat-image-materials-test` 在隔离目录检查旧图升级、预览文件、归档补图及原生资料链路；`--wechat-image-live-test --connection-from <已有Data>` 仅借用已配置连接，使用合成图通过真实聊天链路做一次看图检查，不读取或发送真实微信消息/图片。
+
+方案依据：[UpXuu 的 V2 实测说明](https://upxuu.com/posts/wechat-dat-image-decrypt/)、[wxkey 的离线派生源码](https://github.com/r266-tech/wxkey/blob/01e96fa58ce3ff061dce83e4c36f62104ebc6b16/cmd/wxkey/imgkey.go)、[wechat-decrypt-rs 的媒体解码源码](https://github.com/H3CoF6/wechat-decrypt-rs/blob/185a95eaef24b9afedfb6fdee0c6282dc2ed2700/src/media_decrypt.rs)。实现只读当前 Windows 用户的本机文件，派生值不会发送到 GPT，也不进入备份或安装包。

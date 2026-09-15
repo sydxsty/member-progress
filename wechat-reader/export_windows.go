@@ -33,12 +33,18 @@ type Contact struct {
 	SourceLastMessageAt string `json:"sourceLastMessageAt,omitempty"`
 }
 type Attachment struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Path   string `json:"path,omitempty"`
-	Size   int64  `json:"size"`
-	Type   string `json:"type"`
-	Status string `json:"status"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Path         string `json:"path,omitempty"`
+	Size         int64  `json:"size"`
+	Type         string `json:"type"`
+	Status       string `json:"status"`
+	Mime         string `json:"mime,omitempty"`
+	OriginalPath string `json:"originalPath,omitempty"`
+	OriginalName string `json:"originalName,omitempty"`
+	OriginalSize int64  `json:"originalSize,omitempty"`
+	DecodeStatus string `json:"decodeStatus,omitempty"`
+	IsThumbnail  bool   `json:"isThumbnail,omitempty"`
 }
 type Message struct {
 	ID               string         `json:"id"`
@@ -90,8 +96,10 @@ func contactName(c Contact) string {
 
 var messageFile = regexp.MustCompile(`^message_[0-9]+\.db$`)
 
-func export(ctx context.Context, a *Account, out, cache string, key []byte, selected []string, contactsOnly, all bool) (exportResult, error) {
+func export(ctx context.Context, a *Account, out, cache string, key []byte, selected []string, contactsOnly, all, refreshImages bool) (exportResult, error) {
 	r := exportResult{OK: true, AccountID: a.ID, Warnings: []string{}, Complete: true, SnapshotAt: time.Now().Format(time.RFC3339)}
+	decoder := &imageDecoder{ctx: ctx, account: a, cache: cache, refresh: refreshImages}
+	defer decoder.close()
 	sources := []string{}
 	voiceSources := []string{}
 	voiceLoaded := false
@@ -318,6 +326,9 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 						sn = m.Sender
 					}
 					attachments := attachmentFor(a, media, m, sid)
+					for i := range attachments {
+						decoder.decode(&attachments[i])
+					}
 					if m.Type == 34 && len(attachments) == 1 {
 						if !voiceLoaded {
 							for _, vs := range voiceSources {

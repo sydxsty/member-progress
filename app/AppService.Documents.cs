@@ -52,6 +52,12 @@ public sealed partial class AppService
                     using (var target = new FileStream(Path.Combine(workspace, relative), FileMode.Create, FileAccess.Write))
                         await source.CopyToAsync(target, cancellation).ConfigureAwait(false);
                     file["file"] = relative; file["sha256"] = hash;
+                    if (S(file, "mime").StartsWith("image/", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(stored).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".avif")
+                    {
+                        file["textStatus"] = "图片原文件已提供，可直接查看图像内容；未预先提取文字";
+                        coverage.Add(new JsonObject { ["id"] = S(file, "id"), ["name"] = name, ["status"] = S(file, "textStatus"), ["sha256"] = hash });
+                        continue;
+                    }
                     if (new FileInfo(path).Length > 100L * 1024 * 1024)
                     {
                         file["textStatus"] = "原文件已提供，可按需读取；较大文件不预先展开全文";

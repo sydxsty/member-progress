@@ -23,6 +23,17 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--wechat-image-materials-test"))
+        {
+            if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }
+            Environment.Exit(WeChatImageMaterialsChecks.Run(dataRoot,args.Contains("--backfill-only"))); return;
+        }
+        if (args.Contains("--wechat-image-live-test"))
+        {
+            var connection = Argument(args, "--connection-from");
+            if (Argument(args, "--data-dir") == null || string.IsNullOrEmpty(connection)) { Environment.Exit(1); return; }
+            Environment.Exit(WeChatImageLiveCheck.Run(dataRoot, connection)); return;
+        }
         if (args.Contains("--wechat-revision-test"))
         {
             if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }

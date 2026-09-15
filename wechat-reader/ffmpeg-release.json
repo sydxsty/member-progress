@@ -1,0 +1,13 @@
+{
+  "file": "ffmpeg.exe",
+  "version": "n8.1.2-52-g5a03dfa0f6",
+  "sourceCommit": "5a03dfa0f6",
+  "buildTag": "autobuild-2026-09-14-13-17",
+  "sha256": "799b9ee9484f1cb7eeee997099afc8ab8cda7a2a9bd52615d5ddf3770561dd4b",
+  "size": 132238848,
+  "downloadUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-14-13-17/ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-lgpl-8.1.zip",
+  "archiveSha256": "398be5fb6e09ff3ae419ad62436d566c62705b1cc59bd4f98e8cd79646d42708",
+  "license": "LGPL-2.1-or-later",
+  "sourceUrl": "https://github.com/FFmpeg/FFmpeg/tree/5a03dfa0f6",
+  "buildRecipes": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-14-13-17"
+}

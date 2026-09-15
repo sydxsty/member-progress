@@ -2,10 +2,36 @@
   "file": "app/runtime/wechat-reader/member-wechat-reader.exe",
   "target": "windows-amd64",
   "go": "1.24.7",
-  "sha256": "46e9ff0b576079896b4431a1b970db2fdd709517765793767eb1be46d81301dc",
-  "size": 11000832,
+  "sha256": "9e5bb8eac1eb63ba4f852109277e05e3ec7600c4791b3fd631489c2ff045bdee",
+  "size": 11475968,
   "upstreamCommit": "eb9572ee028cbaa72a50749b9dfe6630b317228f",
   "maskedKeyPatchCommit": "398f128b7f14365b146a312127d3fbce742d9e20",
   "source": "wechat-reader",
-  "networkAtRuntime": false
+  "networkAtRuntime": false,
+  "imageSupport": {
+    "formats": [
+      "plain",
+      "legacy-xor",
+      "v1-aes-xor",
+      "v2-aes-xor",
+      "wxgf-hevc"
+    ],
+    "primaryKeySource": "validated-local-kvcomm-filename-derivation",
+    "keyStorage": "current-user-dpapi",
+    "passiveMemoryFallback": "explicit-refresh-only-45-seconds",
+    "originalsRetained": true
+  },
+  "ffmpeg": {
+    "file": "ffmpeg.exe",
+    "version": "n8.1.2-52-g5a03dfa0f6",
+    "sourceCommit": "5a03dfa0f6",
+    "buildTag": "autobuild-2026-09-14-13-17",
+    "sha256": "799b9ee9484f1cb7eeee997099afc8ab8cda7a2a9bd52615d5ddf3770561dd4b",
+    "size": 132238848,
+    "downloadUrl": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-14-13-17/ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-lgpl-8.1.zip",
+    "archiveSha256": "398be5fb6e09ff3ae419ad62436d566c62705b1cc59bd4f98e8cd79646d42708",
+    "license": "LGPL-2.1-or-later",
+    "sourceUrl": "https://github.com/FFmpeg/FFmpeg/tree/5a03dfa0f6",
+    "buildRecipes": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-14-13-17"
+  }
 }
