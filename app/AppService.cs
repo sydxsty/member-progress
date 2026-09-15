@@ -77,6 +77,8 @@ public sealed partial class AppService : IDisposable
         {
             if(receipts is not JsonArray items||items.Any(x=>x is not JsonObject r||S(r,"requestId").Length==0||r["reminders"] is not JsonArray reminders||reminders.Any(y=>y is not JsonObject alarm||S(alarm,"id").Length==0)))
                 throw new InvalidDataException("聊天提醒的创建记录格式无效。");
+            if(items.OfType<JsonObject>().Any(r=>r["tasks"] is JsonNode tasks&&(tasks is not JsonArray taskItems||taskItems.Any(y=>y is not JsonObject task||S(task,"id").Length==0))))
+                throw new InvalidDataException("聊天任务的创建记录格式无效。");
         }
         if(s["mobileMutationReceipts"] is JsonNode mobileReceipts &&
             (mobileReceipts is not JsonArray mobileItems || mobileItems.Any(x=>x is not JsonObject r||S(r,"requestId").Length==0||S(r,"fingerprint").Length!=64)))
@@ -170,6 +172,12 @@ public sealed partial class AppService : IDisposable
                         Scope(scheduleType,scheduleId); MarkPending(scheduleType,scheduleId); break;
                     case "alarm.save": SaveAlarm(payload); break;
                     case "alarm.toggle": var alarm = Find("alarms",Required(payload,"id")); alarm["enabled"]=!B(alarm,"enabled"); break;
+                    case "alarm.enabled":
+                        if(payload["enabled"] is not JsonValue enabledValue||!enabledValue.TryGetValue<bool>(out var alarmEnabled))
+                            throw new InvalidOperationException("请选择有效的提醒状态。");
+                        Find("alarms",Required(payload,"id"))["enabled"]=alarmEnabled;
+                        break;
+                    case "alarm.skip": SkipAlarm(payload); break;
                     case "alarm.delete": Arr("alarms").Remove(Find("alarms",Required(payload,"id"))); break;
                     case "reminder.poll":
                         result=ClaimReminders(payload,out changed);
@@ -255,6 +263,7 @@ public sealed partial class AppService : IDisposable
     void DeleteStudent(string id)
     {
         var student=Find("students",id);
+        if(S((JsonObject)state["settings"]!,"currentStudentId")==id)((JsonObject)state["settings"]!).Remove("currentStudentId");
         Arr("students").Remove(student);
         student["deletedAt"]=Now();student["summaryStatus"]="idle";student["summaryError"]="";
         Arr("archivedStudents").Add(student);
@@ -380,27 +389,46 @@ public sealed partial class AppService : IDisposable
             if(due)
             {
                 if(S(a,"repeat")=="once")a["enabled"]=false;
-                else if(S(a,"repeat")=="monthly")
-                {
-                    NormalizeMonthlyAlarm(a);
-                    var regular=DateTimeOffset.TryParse(S(a,"monthlyResumeWhen"),out var resumed)?resumed:DateTimeOffset.Parse(S(a,"when"));
-                    a["when"]=(regular>now?regular:NextMonthly(a,regular,now)).ToString("O");
-                    a.Remove("monthlyResumeWhen");
-                }
-                else
-                {
-                    var old=DateTimeOffset.Parse(S(a,"when"));var days=S(a,"repeat") switch{"daily"=>1,"weekly"=>7,_=>Math.Clamp(I(a,"intervalDays",1),1,3650)};
-                    var localOld=TimeZoneInfo.ConvertTime(old,TimeZoneInfo.Local).DateTime;
-                    var localNow=TimeZoneInfo.ConvertTime(now,TimeZoneInfo.Local).DateTime;
-                    var steps=Math.Max(1,(int)Math.Floor((localNow-localOld).TotalDays/days)+1);
-                    var next=localOld.AddDays((double)days*steps);
-                    while(new DateTimeOffset(next,TimeZoneInfo.Local.GetUtcOffset(next))<=now)next=next.AddDays(days);
-                    a["when"]=new DateTimeOffset(next,TimeZoneInfo.Local.GetUtcOffset(next)).ToString("O");
-                }
+                else AdvanceRecurringAlarm(a,now);
             }
             changed=true;
         }
         return result;
+    }
+
+    void SkipAlarm(JsonObject p)
+    {
+        var alarm=Find("alarms",Required(p,"id"));
+        if(!B(alarm,"enabled")||S(alarm,"repeat") is not ("daily" or "weekly" or "monthly" or "interval"))
+            throw new InvalidOperationException("只有启用中的重复提醒可以取消本次。");
+        if(!DateTimeOffset.TryParse(Required(p,"when"),out var expected))
+            throw new InvalidOperationException("请选择要取消的提醒时间。");
+        if(!DateTimeOffset.TryParse(S(alarm,"when"),out var current)||current!=expected)
+            throw new Remote.MobileApiException(409,"这次提醒已更新，请查看新的提醒时间。","conflict");
+        var now=DateTimeOffset.Now;
+        // Match the occurrence shown to the caller, so a second click cannot skip the following week.
+        // Preserve actual delivery history: cancellation is never reported as a notification firing.
+        AdvanceRecurringAlarm(alarm,current>now?current:now);
+    }
+
+    static void AdvanceRecurringAlarm(JsonObject alarm,DateTimeOffset after)
+    {
+        if(S(alarm,"repeat")=="monthly")
+        {
+            NormalizeMonthlyAlarm(alarm);
+            var regular=DateTimeOffset.TryParse(S(alarm,"monthlyResumeWhen"),out var resumed)?resumed:DateTimeOffset.Parse(S(alarm,"when"));
+            alarm["when"]=(regular>after?regular:NextMonthly(alarm,regular,after)).ToString("O");
+            alarm.Remove("monthlyResumeWhen");
+            return;
+        }
+        var old=DateTimeOffset.Parse(S(alarm,"when"));
+        var days=S(alarm,"repeat") switch{"daily"=>1,"weekly"=>7,_=>Math.Clamp(I(alarm,"intervalDays",1),1,3650)};
+        var localOld=TimeZoneInfo.ConvertTime(old,TimeZoneInfo.Local).DateTime;
+        var localAfter=TimeZoneInfo.ConvertTime(after,TimeZoneInfo.Local).DateTime;
+        var steps=Math.Max(1,(int)Math.Floor((localAfter-localOld).TotalDays/days)+1);
+        var next=localOld.AddDays((double)days*steps);
+        while(new DateTimeOffset(next,TimeZoneInfo.Local.GetUtcOffset(next))<=after)next=next.AddDays(days);
+        alarm["when"]=new DateTimeOffset(next,TimeZoneInfo.Local.GetUtcOffset(next)).ToString("O");
     }
 
     static void NormalizeMonthlyAlarm(JsonObject alarm)

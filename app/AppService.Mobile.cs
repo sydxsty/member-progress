@@ -38,6 +38,7 @@ public sealed partial class AppService
             }
             result["messages"] = messages;
             result["preferences"] = AssistantFields((JsonObject)state["preferences"]!, "recentStudentLabels", "recentGlobalAlarmLabels");
+            result["currentUser"] = CurrentUser();
             result["recordVersions"] = versions;
             result["serverTime"] = Now();
             return result;
@@ -76,7 +77,7 @@ public sealed partial class AppService
                 "student.patch" => "students",
                 "task.update" or "task.delete" => "tasks",
                 "alarm.save" when S(payload, "id").Length > 0 => "alarms",
-                "alarm.enabled" or "alarm.delete" or "reminder.snooze" => "alarms",
+                "alarm.enabled" or "alarm.delete" or "alarm.skip" or "reminder.snooze" => "alarms",
                 _ => ""
             };
             if (recordKey.Length > 0)
@@ -109,6 +110,7 @@ public sealed partial class AppService
                     case "alarm.save": SaveAlarm(payload); break;
                     case "alarm.enabled": Find("alarms", Required(payload, "id"))["enabled"] = B(payload, "enabled"); break;
                     case "alarm.delete": Arr("alarms").Remove(Find("alarms", Required(payload, "id"))); break;
+                    case "alarm.skip": SkipAlarm(payload); break;
                     case "reminder.snooze":
                         var alarm = Find("alarms", Required(payload, "id"));
                         if (S(alarm, "repeat") == "monthly")
@@ -170,6 +172,9 @@ public sealed partial class AppService
                 MobileProtocol.Only(p, "id", "enabled"); MobileProtocol.Required(p, "id");
                 if (!p.ContainsKey("enabled")) throw new MobileApiException(400, "请选择提醒状态。");
                 MobileProtocol.BooleanFields(p, "enabled"); break;
+            case "alarm.skip":
+                MobileProtocol.Only(p, "id", "when"); MobileProtocol.Required(p, "id"); MobileProtocol.Required(p, "when");
+                MobileProtocol.StringFields(p, "id", "when"); break;
             case "reminder.snooze":
                 MobileProtocol.Only(p, "id", "minutes"); MobileProtocol.Required(p, "id");
                 if (p.ContainsKey("minutes") && (p["minutes"] is not JsonValue mv || !mv.TryGetValue<int>(out var minutes) || minutes is < 1 or > 1440))

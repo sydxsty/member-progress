@@ -47,6 +47,7 @@ public sealed partial class AppService
             return new JsonObject
             {
                 ["generatedAt"]=Now(),
+                ["currentUser"]=CurrentUser(),
                 ["students"]=new JsonArray(Rows("students").Select(s=>(JsonNode)AssistantFields(s,"id","name","grade","tags","bio","currentSummary")).ToArray()),
                 ["projects"]=new JsonArray(Rows("projects").Select(p=>(JsonNode)AssistantFields(p,"id","name","studentIds","currentSummary")).ToArray()),
                 ["tasks"]=new JsonArray(Rows("tasks").Select(t=>(JsonNode)AssistantFields(t,"id","title","studentIds","projectId","start","due","done","tags","createdAt")).ToArray()),
@@ -54,6 +55,13 @@ public sealed partial class AppService
                 ["recentArchives"]=recent,["referencedArchives"]=referenced
             };
         }
+    }
+
+    JsonObject? CurrentUser()
+    {
+        var id=S((JsonObject)state["settings"]!,"currentStudentId");
+        var member=Rows("students").FirstOrDefault(s=>S(s,"id")==id);
+        return member==null?null:AssistantFields(member,"id","name");
     }
 
     JsonObject AssistantArchive(string type,JsonObject scope,bool whole,bool archived)

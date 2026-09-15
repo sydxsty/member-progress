@@ -21,6 +21,7 @@ internal sealed class AssistantMessage
     public bool IncludeRecent { get; set; } = true;
     public string ReplyToMessageId { get; set; } = "";
     public List<AssistantReminderResult> ReminderResults { get; set; } = [];
+    public List<AssistantTaskResult> TaskResults { get; set; } = [];
     // Persisted locally for the next immediate clarification; stripped from UI snapshots.
     public bool AwaitingReminderDetails { get; set; }
     public string ReminderRequestText { get; set; } = "";
@@ -37,6 +38,17 @@ internal sealed class AssistantReminderResult
     public string ScopeLabel { get; set; } = "全局";
     public string Repeat { get; set; } = "once";
     public int? MonthDay { get; set; }
+}
+
+internal sealed class AssistantTaskResult
+{
+    public string Id { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Start { get; set; } = "";
+    public string Due { get; set; } = "";
+    public List<string> StudentIds { get; set; } = [];
+    public string ProjectId { get; set; } = "";
+    public string ScopeLabel { get; set; } = "";
 }
 
 internal sealed class AssistantState

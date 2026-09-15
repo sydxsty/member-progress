@@ -18,11 +18,23 @@ internal static class Program
         {
             using var updateMutex = new Mutex(true, @"Local\StudentProgress-Update-" + DataIdentity(updateTarget), out var firstUpdater);
             if (!firstUpdater) { MessageBox.Show("更新窗口已经打开，请在该窗口查看进度。", "成员进度"); return; }
-            try { Application.Run(new UpdateForm(AppContext.BaseDirectory, updateTarget)); }
+            try { Application.Run(new UpdateForm(AppContext.BaseDirectory, updateTarget, Argument(args,"--current-member"))); }
             finally { updateMutex.ReleaseMutex(); }
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--recurring-reminder-test"))
+        {
+            Environment.Exit(Remote.RecurringReminderChecks.Run(dataRoot));return;
+        }
+        if (args.Contains("--assistant-tasks-test"))
+        {
+            Environment.Exit(AssistantTaskChecks.Run(dataRoot));return;
+        }
+        if (args.Contains("--assistant-tasks-live-test"))
+        {
+            Environment.Exit(AssistantTaskChecks.RunLive(dataRoot));return;
+        }
         if (args.Contains("--mobile-test"))
         {
             Environment.Exit(Remote.MobileChecks.Run(dataRoot)); return;
@@ -119,7 +131,7 @@ internal static class Program
         {
             Directory.CreateDirectory(dataRoot);
             Application.ThreadException += (_, _) => MessageBox.Show("操作未完成，请重试。已保存的资料会保留。", "成员进度");
-            using var form = new MainForm(dataRoot, Argument(args, "--notification"));
+            using var form = new MainForm(dataRoot, Argument(args, "--notification"), Argument(args,"--current-member"));
             _ = form.Handle;
             using var cancel = new CancellationTokenSource();
             _ = ListenForActivationAsync(identity, form, cancel.Token);

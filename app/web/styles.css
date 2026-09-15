@@ -34,3 +34,7 @@
 .project-item{display:grid;grid-template-columns:28px minmax(0,1fr);justify-content:stretch;align-items:start;gap:10px;text-align:left}.project-item .project-icon{display:flex;align-items:center;justify-content:center;height:28px;width:28px;min-width:28px;margin:0;color:#7c97c6}.project-item .project-item-text{display:block;min-width:0;margin:0;color:inherit;font-size:inherit}.project-item .project-item-text strong{color:#445b7b;overflow-wrap:anywhere;margin:0;font-size:13px;line-height:1.5}.project-item .project-member-count{display:block;margin-top:5px;font-size:11px;color:#94a1b3}
 @media(max-width:1050px){.main-empty.inline-grade{width:30px}.main-empty.inline-tags{min-width:16px;max-width:16px}.member-reminders{gap:3px;max-width:128px;padding:2px 3px;font-size:8px}}
 @media(max-width:760px){.member-reminders{max-width:100px}.member-reminders time{max-width:55px}.main-empty.inline-grade{width:25px}.main-empty.inline-tags{min-width:15px;max-width:15px}}
+
+.alarm-actions .alarm-skip,.quick-presets .alarm-skip{border:0;background:transparent;color:#8393a9;font-size:11px;padding:4px 6px;min-height:28px;white-space:nowrap}.alarm-actions .alarm-skip:hover,.quick-presets .alarm-skip:hover{background:#f0f4fa;color:#5377ac}
+
+.alarm-master{display:flex;align-items:center;gap:9px;margin-top:12px;color:#7c8ca2;font-size:12px}.alarm-master small{font-size:11px;color:#99a5b7}

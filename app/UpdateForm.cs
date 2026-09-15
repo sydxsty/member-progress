@@ -8,14 +8,16 @@ namespace StudentProgress;
 internal sealed class UpdateForm : Form
 {
     readonly string source, target;
+    readonly string? currentMember;
     readonly Label heading = new() { Text = "新版已准备好", AutoSize = true, Font = new Font("Microsoft YaHei UI", 16, FontStyle.Bold), Location = new Point(28, 25) };
     readonly Label detail = new() { AutoSize = false, Location = new Point(28, 78), Size = new Size(480, 118), Text = "请先保存旧版中未发送的内容，再从托盘菜单选择“退出”。\n\n退出后会自动更新并重新打开，已有资料会保留。" };
     readonly Button cancel = new() { Text = "暂不更新", Location = new Point(386, 211), Size = new Size(115, 36) };
     readonly System.Windows.Forms.Timer timer = new() { Interval = 800 };
     bool updating, finished;
 
-    public UpdateForm(string sourceDirectory, string targetDirectory)
+    public UpdateForm(string sourceDirectory, string targetDirectory, string? currentMemberId = null)
     {
+        currentMember = currentMemberId;
         source = Path.GetFullPath(sourceDirectory).TrimEnd(Path.DirectorySeparatorChar);
         target = Path.GetFullPath(targetDirectory).TrimEnd(Path.DirectorySeparatorChar);
         Text = "成员进度 · 更新";
@@ -66,7 +68,9 @@ internal sealed class UpdateForm : Form
             var backup = await Task.Run(() => ApplyFiles(source, target));
             // Named mutex ownership returns to this UI thread after the await.
             appMutex.ReleaseMutex(); acquired = false;
-            var launched = Process.Start(new ProcessStartInfo(Path.Combine(target, "StudentProgress.exe")) { UseShellExecute = true, WorkingDirectory = target });
+            var launch = new ProcessStartInfo(Path.Combine(target, "StudentProgress.exe")) { UseShellExecute = true, WorkingDirectory = target };
+            if(!string.IsNullOrEmpty(currentMember)) { launch.ArgumentList.Add("--current-member");launch.ArgumentList.Add(currentMember); }
+            var launched = Process.Start(launch);
             var receipt = new JsonObject { ["ok"] = true, ["completedAt"] = DateTimeOffset.Now.ToString("O"), ["target"] = target, ["programBackup"] = backup, ["pid"] = launched?.Id, ["dataUntouched"] = true };
             File.WriteAllText(Path.Combine(source, "update-result.json"), receipt.ToJsonString());
             finished = true; updating = false;

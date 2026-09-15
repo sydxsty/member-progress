@@ -37,6 +37,12 @@ public sealed partial class AppService
         if(!Uri.TryCreate(url,UriKind.Absolute,out var uri)||uri.Scheme is not ("http" or "https")||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0)
             throw new InvalidOperationException("请输入有效的 API 地址，例如 https://api.openai.com/v1。");
         var mode=S(p,"apiMode",S(settings,"apiMode","responses"));if(mode is not ("responses" or "chat"))throw new InvalidOperationException("API 模式无效。");
+        if(p.ContainsKey("currentStudentId"))
+        {
+            var member=S(p,"currentStudentId");
+            if(member.Length>0)Find("students",member);
+            settings["currentStudentId"]=member;
+        }
         settings["baseUrl"]=url;settings["model"]=S(p,"model",S(settings,"model")).Trim();settings["apiMode"]=mode;
         StoreKey(S(p,"key"));
     }

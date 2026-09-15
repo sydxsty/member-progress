@@ -204,7 +204,8 @@ public sealed partial class AssistantService : IDisposable
                     if(!requested.Select(r=>r.ScopeType+":"+r.ScopeId).SequenceEqual(user.References.Select(r=>r.ScopeType+":"+r.ScopeId)))
                         throw new InvalidOperationException("重试的引用已发生变化，请作为新问题发送。");
                 }
-                if(user.ReminderRequestText.Length==0&&AssistantResponse.HasExplicitCreationRequest(user.Text))user.ReminderRequestText=user.Text;
+                if(AssistantResponse.IsPlanOnly(user.Text))user.ReminderRequestText="";
+                else if(user.ReminderRequestText.Length==0&&AssistantResponse.HasExplicitCreationRequest(user.Text))user.ReminderRequestText=user.Text;
                 previous=next.Messages.Take(next.Messages.Count-1).ToList();
             }
             else
@@ -252,11 +253,12 @@ public sealed partial class AssistantService : IDisposable
     private async Task CompleteRequestAsync(AssistantMessage user,List<AssistantMessage> previous,JsonObject selection,CancellationTokenSource request)
     {
         AssistantResponse? response=null;
+        JsonObject? context=null;
         string error="";
         try
         {
             request.Token.ThrowIfCancellationRequested();
-            var context=contextProvider(selection);
+            context=contextProvider(selection);
             string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText);
             string output=responseProvider!=null
                 ?await responseProvider(prompt,request.Token).ConfigureAwait(false)
@@ -271,6 +273,7 @@ public sealed partial class AssistantService : IDisposable
         {
             if(currentRequest!=request)return;
             var results=new List<AssistantReminderResult>();
+            var taskResults=new List<AssistantTaskResult>();
             string answer="";
             try
             {
@@ -279,18 +282,27 @@ public sealed partial class AssistantService : IDisposable
                 if(request.IsCancellationRequested){response=null;error="回答已取消，问题已保留。";}
                 if(response!=null)
                 {
-                    if(response.Reminders.Count>0)
+                    if(response.Reminders.Count>0||response.Tasks.Count>0)
                     {
-                        if(reminderCreator==null||user.ReminderRequestText.Length==0)
-                            answer="本次未创建提醒。需要创建时，请直接告诉我提醒事项和日期时间。";
+                        if(reminderCreator==null||user.ReminderRequestText.Length==0||AssistantResponse.IsPlanOnly(user.Text))
+                            answer="本次未创建提醒或任务。需要创建时，请直接告诉我事项和日期或时间。";
                         else
                         {
                             request.Token.ThrowIfCancellationRequested();
-                            var receipt=reminderCreator(new JsonObject{["requestId"]=user.Id,["reminders"]=response.Reminders.DeepClone()});
+                            response=AssistantTargets.Resolve(response,user.ReminderRequestText+"\n"+user.Text,context!);
+                            var changes=new JsonObject{["requestId"]=user.Id,["reminders"]=response.Reminders.DeepClone(),["tasks"]=response.Tasks.DeepClone()};
+                            string currentId=AssistantJson.Text(context?["currentUser"]?["id"]);
+                            if(currentId.Length>0&&(response.Reminders.OfType<JsonObject>().Any(r=>AssistantJson.Text(r["studentId"])==currentId)||
+                                response.Tasks.OfType<JsonObject>().Any(t=>t["studentIds"] is JsonArray ids&&ids.Any(id=>AssistantJson.Text(id)==currentId))))
+                                changes["expectedCurrentStudentId"]=currentId;
+                            var receipt=reminderCreator(changes);
                             results=AssistantResponse.ReadReceipt(receipt);
+                            taskResults=AssistantResponse.ReadTaskReceipt(receipt);
+                            if(results.Count+taskResults.Count is <1 or >8)throw new InvalidOperationException("操作没有返回完整结果，请查看任务和提醒列表。");
+                            string created=string.Join("、",new[]{results.Count>0?$"{results.Count} 条提醒":"",taskResults.Count>0?$"{taskResults.Count} 个任务":""}.Where(x=>x.Length>0));
                             answer=receipt["replayed"]?.GetValue<bool>()==true
-                                ?$"这条请求已创建 {results.Count} 条提醒，本次没有重复添加。"
-                                :$"已创建 {results.Count} 条提醒。";
+                                ?$"这条请求已创建 {created}，本次没有重复添加。"
+                                :$"已创建 {created}。";
                         }
                     }
                     else answer=AssistantResponse.SafeAdvice(response.Text);
@@ -298,9 +310,9 @@ public sealed partial class AssistantService : IDisposable
             }
             catch(OperationCanceledException){error="回答已取消，问题已保留。";}
             catch(Exception e) when(e is InvalidOperationException or IOException or System.Text.Json.JsonException){error=e.Message;}
-            catch{error="本次提醒未能完成，请查看提醒列表后重试。";}
+            catch{error="本次操作未能完成，请查看任务和提醒列表后重试。";}
             var next=CopyState(state);
-            if(answer.Length>0)next.Messages.Add(new(){Role="assistant",Text=answer,ReplyToMessageId=user.Id,ReminderResults=results,
+            if(answer.Length>0)next.Messages.Add(new(){Role="assistant",Text=answer,ReplyToMessageId=user.Id,ReminderResults=results,TaskResults=taskResults,
                 AwaitingReminderDetails=response?.NeedsReminderDetails==true&&reminderCreator!=null&&user.ReminderRequestText.Length>0,
                 ReminderRequestText=response?.NeedsReminderDetails==true&&reminderCreator!=null?user.ReminderRequestText:""});
             next.Error=error;next.Interrupted=false;
@@ -309,7 +321,7 @@ public sealed partial class AssistantService : IDisposable
             {
                 // Keep both old disk history and in-memory messages intact. A retry reuses the
                 // saved user id, so a committed host receipt cannot create duplicate reminders.
-                state.Error=results.Count>0?"提醒已创建，但回答暂时无法写入本机；重试不会重复创建提醒。":"本次聊天暂时无法写入本机，请检查磁盘空间或资料目录权限。";
+                state.Error=results.Count+taskResults.Count>0?"提醒或任务已创建，但回答暂时无法写入本机；重试不会重复创建。":"本次聊天暂时无法写入本机，请检查磁盘空间或资料目录权限。";
                 state.Interrupted=false;
             }
             currentRequest=null;request.Dispose();

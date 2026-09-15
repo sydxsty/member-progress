@@ -21,11 +21,21 @@ public sealed partial class AppService
                 var existing=(JsonArray)saved["reminders"]!;
                 if(existing.OfType<JsonObject>().Any(r=>!Rows("alarms").Any(a=>S(a,"id")==S(r,"id"))))
                     throw new InvalidOperationException("这次请求创建的提醒已被删除，不会重复创建。需要重新添加时，请发送新的创建请求。");
-                return new JsonObject { ["reminders"]=existing.DeepClone(),["replayed"]=true };
+                var existingTasks=saved["tasks"] as JsonArray ?? new();
+                if(existingTasks.OfType<JsonObject>().Any(t=>!Rows("tasks").Any(a=>S(a,"id")==S(t,"id"))))
+                    throw new InvalidOperationException("这次请求创建的任务已被删除，不会重复创建。需要重新添加时，请发送新的创建请求。");
+                return new JsonObject { ["reminders"]=existing.DeepClone(),["tasks"]=existingTasks.DeepClone(),["replayed"]=true };
             }
-            if(payload["reminders"] is not JsonArray input||input.Count is <1 or >8||input.Any(r=>r is not JsonObject))
-                throw new InvalidOperationException("一次可以创建 1 至 8 条简单提醒，请重新说明需要的提醒。");
+            if(payload.ContainsKey("expectedCurrentStudentId")&&S(payload,"expectedCurrentStudentId")!=S((JsonObject)state["settings"]!,"currentStudentId"))
+                throw new InvalidOperationException("当前用户已变更，本次没有创建。请按新的当前用户重新发送请求。");
+            if(payload["reminders"] is not JsonArray input||input.Any(r=>r is not JsonObject)||
+                payload["tasks"] is not null and not JsonArray)
+                throw new InvalidOperationException("任务或提醒格式无效，本次没有创建。");
+            var taskInput=payload["tasks"] as JsonArray ?? new();
+            if(input.Count+taskInput.Count is <1 or >8||taskInput.Any(t=>t is not JsonObject))
+                throw new InvalidOperationException("一次可以创建合计 1 至 8 条任务或提醒。");
             var normalized=input.OfType<JsonObject>().Select(NormalizeAssistantReminder).ToArray();
+            var normalizedTasks=taskInput.OfType<JsonObject>().Select(NormalizeAssistantTask).ToArray();
             var previous=(JsonObject)state.DeepClone();
             try
             {
@@ -37,15 +47,51 @@ public sealed partial class AppService
                     if(S(alarm,"repeat")=="monthly"&&reminder["monthDay"]!=null)alarm["monthDay"]=I(reminder,"monthDay");
                     created.Add(AssistantReminderResult(alarm));
                 }
+                var createdTasks=new JsonArray();
+                foreach(var task in normalizedTasks)
+                {
+                    AddTask(task);
+                    var savedTask=Rows("tasks").Last();
+                    savedTask["studentIds"]=task["studentIds"]!.DeepClone();
+                    var record=AssistantFields(savedTask,"id","title","start","due","studentIds","projectId");
+                    record["scopeLabel"]=S(task,"scopeType")=="project"?"项目 · "+S(Find("projects",S(task,"scopeId")),"name"):
+                        string.Join("、",((JsonArray)task["studentIds"]!).Select(id=>S(Find("students",id!.GetValue<string>()),"name")));
+                    createdTasks.Add(record);
+                }
                 state["assistantReminderReceipts"] ??= new JsonArray();
                 ((JsonArray)state["assistantReminderReceipts"]!).Add(new JsonObject
-                { ["requestId"]=requestId,["createdAt"]=Now(),["reminders"]=created.DeepClone() });
+                { ["requestId"]=requestId,["createdAt"]=Now(),["reminders"]=created.DeepClone(),["tasks"]=createdTasks.DeepClone() });
                 Save();
-                result=new JsonObject { ["reminders"]=created,["replayed"]=false };
+                result=new JsonObject { ["reminders"]=created,["tasks"]=createdTasks,["replayed"]=false };
             }
             catch {state=previous;throw;}
         }
         Notify();return result;
+    }
+
+    JsonObject NormalizeAssistantTask(JsonObject input)
+    {
+        var title=Required(input,"title",500);
+        var start=Required(input,"start",10);var due=Required(input,"due",10);
+        if(!DateOnly.TryParseExact(start,"yyyy-MM-dd",CultureInfo.InvariantCulture,DateTimeStyles.None,out var first)||
+            !DateOnly.TryParseExact(due,"yyyy-MM-dd",CultureInfo.InvariantCulture,DateTimeStyles.None,out var last)||last<first)
+            throw new InvalidOperationException("任务日期范围无效，本次没有创建。");
+        if(last<DateOnly.FromDateTime(DateTime.Now))throw new InvalidOperationException("任务日期已经过去，请重新指定日期。");
+        if(input["studentIds"] is not JsonArray ids||ids.Any(id=>id is not JsonValue v||!v.TryGetValue<string>(out _)))
+            throw new InvalidOperationException("任务的成员无法识别，请重新说明。");
+        var members=Strings(ids);ValidateMembers(members);
+        var project=S(input,"projectId");
+        if(project.Length>0)
+        {
+            var projectMembers=Strings(Find("projects",project)["studentIds"]);
+            if(members.Count==0)members=projectMembers;
+            else if(members.Any(id=>!projectMembers.Any(p=>p!.GetValue<string>()==id!.GetValue<string>())))
+                throw new InvalidOperationException("任务成员不属于指定项目，请重新说明。");
+            ValidateMembers(members);
+        }
+        else if(members.Count==0)throw new InvalidOperationException("请先在设置中选择当前用户，或指定任务成员。");
+        return new JsonObject { ["title"]=title,["start"]=start,["due"]=due,["studentIds"]=members,
+            ["scopeType"]=project.Length>0?"project":"student",["scopeId"]=project.Length>0?project:members[0]!.GetValue<string>() };
     }
 
     JsonObject NormalizeAssistantReminder(JsonObject input)

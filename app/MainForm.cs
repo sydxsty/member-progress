@@ -25,7 +25,7 @@ public sealed class MainForm : Form
     private string? _pendingActivation;
     private bool _exiting, _ready, _polling;
 
-    public MainForm(string dataRoot, string? activation)
+    public MainForm(string dataRoot, string? activation, string? currentMember = null)
     {
         _dataRoot = dataRoot;
         _pendingActivation = activation;
@@ -35,6 +35,9 @@ public sealed class MainForm : Form
         var iconPath = Path.Combine(AppContext.BaseDirectory, "app.ico");
         Icon = File.Exists(iconPath) ? new System.Drawing.Icon(iconPath) : SystemIcons.Application;
         _service = new AppService(dataRoot);
+        // An installer may select an existing member on the first launch under the app mutex.
+        if(!string.IsNullOrEmpty(currentMember)&&_service.Snapshot()["students"]!.AsArray().Any(s=>s?["id"]?.GetValue<string>()==currentMember))
+            _service.HandleAsync("settings.save",new JsonObject{["currentStudentId"]=currentMember}).GetAwaiter().GetResult();
         _service.RegisterBackupFiles(new[] { "assistant/history.json", "assistant/settings.json" });
         try
         {

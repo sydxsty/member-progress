@@ -90,11 +90,19 @@
           if(p.id)Object.assign(find(state.alarms,p.id,'提醒'),alarm);else state.alarms.push(alarm);
           if(p.scopeType==='global')remember('recentGlobalAlarmLabels',[p.title],6);break;
         }
+        case 'alarm.enabled': {find(state.alarms,p.id,'提醒').enabled=!!p.enabled;break;}
+        case 'alarm.skip': {
+          const a=find(state.alarms,p.id,'提醒');if(!a.enabled||a.repeat==='once'||a.when!==p.when)throw new Error('提醒已有更新，请查看后重试。');
+          const d=new Date(a.when);
+          if(a.repeat==='monthly'){const day=a.monthDay||d.getDate();d.setDate(1);d.setMonth(d.getMonth()+1);d.setDate(Math.min(day,new Date(d.getFullYear(),d.getMonth()+1,0).getDate()));}
+          else d.setDate(d.getDate()+(a.repeat==='daily'?1:a.repeat==='weekly'?7:a.intervalDays||1));
+          a.when=d.toISOString();break;
+        }
         case 'alarm.toggle': {const a=find(state.alarms,p.id,'提醒');a.enabled=!a.enabled;break;}
         case 'alarm.delete': state.alarms=state.alarms.filter(a=>a.id!==p.id);break;
         case 'reminder.snooze': {const a=find(state.alarms,p.id,'提醒');a.when=new Date(Date.now()+(p.minutes||10)*60000).toISOString();a.enabled=true;break;}
         case 'reminder.poll': return [];
-        case 'settings.save': Object.assign(state.settings,{baseUrl:p.baseUrl||'',model:p.model||'',apiMode:p.apiMode||'responses',aiConfigured:false});break;
+        case 'settings.save': Object.assign(state.settings,{baseUrl:p.baseUrl||'',model:p.model||'',apiMode:p.apiMode||'responses',currentStudentId:p.currentStudentId||'',aiConfigured:false});break;
         case 'settings.detect': throw new Error('导入本机 GPT 配置需在桌面应用中操作。');
         case 'backup.export': case 'backup.import': throw new Error('完整备份与恢复需在桌面应用中操作。');
         case 'file.open': throw new Error('浏览器预览不保存附件原件；请在桌面应用中打开。');

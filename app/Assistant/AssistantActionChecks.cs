@@ -15,7 +15,7 @@ public static class AssistantActionChecks
             Directory.CreateDirectory(dataRoot);
             void Check(bool ok,string name){if(!ok)throw new InvalidOperationException(name);passed.Add(name);}
             void Reject(string input,string name){bool rejected=false;try{AssistantResponse.Parse(input);}catch(InvalidOperationException){rejected=true;}Check(rejected,name);}
-            const string question="请为联调成员创建一条明天上午9点的提醒，内容为核对实验进展。";
+            const string question="请创建一条明天上午9点的全局提醒，内容为核对实验进展。";
             string output=new JsonObject{["text"]="",["reminders"]=new JsonArray(new JsonObject{["scopeType"]="global",["title"]="核对实验进展",["when"]="2030-09-15T09:00:00+08:00",["repeat"]="once"})}.ToJsonString();
             Check(AssistantResponse.Parse(output).Reminders.Count==1&&AssistantResponse.Parse("```json\n"+output+"\n```").Reminders.Count==1,"strict_envelope_and_single_json_fence");
             Reject("{\"text\":\"ok\",\"text\":\"other\",\"reminders\":[]}","duplicate_json_keys_rejected");
@@ -26,7 +26,13 @@ public static class AssistantActionChecks
             Check(AssistantResponse.HasExplicitCreationRequest(question)&&AssistantResponse.HasExplicitCreationRequest("明天9点提醒我交材料")&&
                 !AssistantResponse.HasExplicitCreationRequest("建议下一步干啥，先不要创建提醒")&&
                 !AssistantResponse.HasExplicitCreationRequest("解释“明天9点提醒我交材料”是什么意思")&&
-                !AssistantResponse.HasExplicitCreationRequest("请分析以下归档：明天9点提醒我交材料"),"current_explicit_request_gate_excludes_quotes_advice_negatives");
+                !AssistantResponse.HasExplicitCreationRequest("请分析以下归档：明天9点提醒我交材料")&&
+                !AssistantResponse.HasExplicitCreationRequest("下午2点叫我，你会怎么做？给出plan")&&
+                !AssistantResponse.HasExplicitCreationRequest("先不要创建任务，给我一个计划")&&
+                AssistantResponse.HasExplicitCreationRequest("下午2点叫我")&&
+                AssistantResponse.HasExplicitCreationRequest("明天提醒我去南湖")&&
+                AssistantResponse.HasExplicitCreationRequest("10月22日-24日提醒我去CNCC")&&
+                AssistantResponse.HasExplicitCreationRequest("给彭泽顺创建明天的任务：去南湖"),"current_explicit_request_gate_excludes_quotes_advice_negatives_and_plans");
             Check(AssistantResponse.SafeAdvice("已经创建提醒了").StartsWith("本次未"),"model_cannot_claim_unsaved_reminder_creation");
             var receipts=new Dictionary<string,JsonObject>();int commits=0,calls=0;
             JsonObject Create(JsonObject payload)
@@ -35,10 +41,13 @@ public static class AssistantActionChecks
                 if(receipts.TryGetValue(id,out var existing)){var replay=existing.DeepClone().AsObject();replay["replayed"]=true;return replay;}
                 commits++;
                 var input=payload["reminders"]![0]!.AsObject();
-                var receipt=new JsonObject{["reminders"]=new JsonArray(new JsonObject{["id"]="alarm-"+commits,["title"]=AssistantJson.Text(input["title"]),["when"]=AssistantJson.Text(input["when"]),["repeat"]="once",["scopeType"]="global",["scopeLabel"]="全局"}),["replayed"]=false};
+                var receipt=new JsonObject{["reminders"]=new JsonArray(new JsonObject{["id"]="alarm-"+commits,["title"]=AssistantJson.Text(input["title"]),["when"]=AssistantJson.Text(input["when"]),["repeat"]="once",["scopeType"]=input["scopeType"]!.DeepClone(),["studentId"]=input["studentId"]?.DeepClone(),["scopeLabel"]="联调对象"}),["replayed"]=false};
                 receipts[id]=receipt.DeepClone().AsObject();return receipt;
             }
-            JsonObject Context(JsonObject _)=>new(){["generatedAt"]="2030-09-14T12:00:00+08:00"};
+            JsonObject Context(JsonObject _)=>new(){["generatedAt"]="2030-09-14T12:00:00+08:00",
+                ["currentUser"]=new JsonObject{["id"]="self",["name"]="彭泽顺"},
+                ["students"]=new JsonArray(new JsonObject{["id"]="self",["name"]="彭泽顺"},new JsonObject{["id"]="other",["name"]="联调成员"}),
+                ["projects"]=new JsonArray(new JsonObject{["id"]="project-1",["name"]="联调项目"})};
             static JsonObject Connection()=>new();
             static void Await(Task task)=>task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
             static JsonObject Do(AssistantService service,string action,JsonObject? payload=null)=>(service.HandleAsync(action,payload??new()).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult() as JsonObject)!;
@@ -113,6 +122,56 @@ public static class AssistantActionChecks
                 Do(service,"assistant.send",new(){["text"]="分析最近归档，建议下一步干啥"});Finish(service);
                 Do(service,"assistant.send",new(){["text"]="明天9点"});Finish(service);
                 Check(commits==unrelatedBefore,"unrelated_advice_breaks_pending_authorization_even_if_model_requests_details");
+            }
+            string taskOutput=new JsonObject{["text"]="",["reminders"]=new JsonArray(),["tasks"]=new JsonArray(new JsonObject
+                {["title"]="去南湖",["start"]="2030-09-15",["due"]="2030-09-15",["studentIds"]=new JsonArray("self")})}.ToJsonString();
+            var dayTask=AssistantResponse.Parse(taskOutput);
+            var cncc=JsonNode.Parse(taskOutput)!.AsObject();cncc["tasks"]![0]!["title"]="去CNCC";cncc["tasks"]![0]!["start"]="2030-10-22";cncc["tasks"]![0]!["due"]="2030-10-24";
+            Check(dayTask.Tasks.Count==1&&dayTask.Reminders.Count==0&&AssistantResponse.Parse(cncc.ToJsonString()).Tasks[0]!["due"]!.GetValue<string>()=="2030-10-24","single_day_and_date_range_tasks_do_not_require_clock_time");
+            Reject(taskOutput.Replace("2030-09-15","2030-02-30"),"task_calendar_date_required");
+            Reject(taskOutput.Replace("\"start\":\"2030-09-15\"","\"start\":\"2030-09-16\""),"reversed_task_dates_rejected");
+            Reject(taskOutput.Replace("2030-09-15","2030-09-15T09:00:00+08:00"),"task_date_only_format_required");
+            var personal=AssistantTargets.Resolve(AssistantResponse.Parse(output),"下午2点叫我",Context(new()));
+            Check(personal.Reminders[0]!["scopeType"]!.GetValue<string>()=="student"&&personal.Reminders[0]!["studentId"]!.GetValue<string>()=="self"&&
+                AssistantTargets.Resolve(AssistantResponse.Parse(output),"明天9点提醒检查材料",Context(new())).Reminders[0]!["studentId"]!.GetValue<string>()=="self", "personal_and_unspecified_reminders_are_for_current_member_even_if_model_proposes_global");
+            var incorrectOwner=JsonNode.Parse(taskOutput)!.AsObject();incorrectOwner["tasks"]![0]!["studentIds"]=new JsonArray("other");
+            Check(AssistantTargets.Resolve(AssistantResponse.Parse(incorrectOwner.ToJsonString()),"明天提醒我去南湖",Context(new())).Tasks[0]!["studentIds"]![0]!.GetValue<string>()=="self","date_only_personal_task_is_bound_to_current_member");
+            Check(AssistantTargets.Resolve(AssistantResponse.Parse(output),question,Context(new())).Reminders[0]!["scopeType"]!.GetValue<string>()=="global"&&
+                AssistantTargets.Resolve(AssistantResponse.Parse(incorrectOwner.ToJsonString()),"给联调成员创建明天的任务：去南湖",Context(new())).Tasks[0]!["studentIds"]![0]!.GetValue<string>()=="other","explicit_global_and_other_member_targets_are_preserved");
+            var projectAlarm=JsonNode.Parse(output)!.AsObject();projectAlarm["reminders"]![0]!["scopeType"]="project";projectAlarm["reminders"]![0]!["projectId"]="project-1";
+            Check(AssistantTargets.Resolve(AssistantResponse.Parse(projectAlarm.ToJsonString()),"给联调项目创建明天9点的提醒",Context(new())).Reminders[0]!["projectId"]!.GetValue<string>()=="project-1","explicit_project_target_is_preserved");
+            bool missingSelf=false;try{AssistantTargets.Resolve(dayTask,"明天提醒我去南湖",new());}catch(InvalidOperationException e){missingSelf=e.Message.Contains("当前用户");}
+            Check(missingSelf,"missing_current_member_never_falls_back_to_global");
+            int taskCommits=0;var taskReceipts=new Dictionary<string,JsonObject>();
+            JsonObject CreateTask(JsonObject payload)
+            {
+                string id=AssistantJson.Text(payload["requestId"]);
+                if(taskReceipts.TryGetValue(id,out var saved)){var replay=saved.DeepClone().AsObject();replay["replayed"]=true;return replay;}
+                Check(AssistantJson.Text(payload["expectedCurrentStudentId"])=="self","task_creation_checks_current_member_setting_snapshot");
+                taskCommits++;var input=payload["tasks"]![0]!.DeepClone().AsObject();input["id"]="task-"+taskCommits;input["scopeLabel"]="彭泽顺";
+                var receipt=new JsonObject{["reminders"]=new JsonArray(),["tasks"]=new JsonArray(input)};taskReceipts[id]=receipt.DeepClone().AsObject();return receipt;
+            }
+            string taskRoot=Path.Combine(dataRoot,"personal-tasks");
+            using(var service=new AssistantService(taskRoot,dataRoot,Context,Connection,CreateTask,(_,_)=>Task.FromResult(taskOutput)))
+            {
+                Do(service,"assistant.send",new(){["text"]="明天提醒我去南湖"});Finish(service);
+                var answer=service.Snapshot()["messages"]![1]!;
+                Check(taskCommits==1&&answer["taskResults"]!.AsArray().Count==1&&answer["reminderResults"]!.AsArray().Count==0&&AssistantJson.Text(answer["text"])=="已创建 1 个任务。","task_success_text_and_cards_come_only_from_host_receipt");
+                service.Reload();Do(service,"assistant.clear");Do(service,"assistant.undo-clear");
+                Check(service.Snapshot()["messages"]![1]!["taskResults"]![0]!["id"]!.GetValue<string>()=="task-1","task_result_survives_reload_and_clear_undo");
+                Do(service,"assistant.send",new(){["text"]="针对这个任务：下午2点叫我，你会怎么做？给出plan"});Finish(service);
+                Check(taskCommits==1,"plan_question_cannot_commit_even_when_model_proposes_task");
+            }
+            int taskRuns=0;var taskEntered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var taskGate=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            string taskRetryRoot=Path.Combine(dataRoot,"task-retry");
+            using(var service=new AssistantService(taskRetryRoot,dataRoot,Context,Connection,CreateTask,(_,_)=>{taskRuns++;taskEntered.TrySetResult();return taskRuns==1?taskGate.Task:Task.FromResult(taskOutput);}))
+            {
+                Do(service,"assistant.send",new(){["text"]="明天提醒我去南湖"});Await(taskEntered.Task);
+                string userId=AssistantJson.Text(service.Snapshot()["messages"]![0]!["id"]);
+                string history=Path.Combine(taskRetryRoot,"assistant","history.json"),saved=history+".saved";File.Move(history,saved);Directory.CreateDirectory(history);
+                taskGate.SetResult(taskOutput);Finish(service);Directory.Delete(history);File.Move(saved,history);
+                Do(service,"assistant.send",new(){["retryMessageId"]=userId});Finish(service);
+                Check(taskCommits==2&&AssistantJson.Text(service.Snapshot()["messages"]![1]!["text"]).Contains("没有重复添加"),"task_retry_after_history_save_failure_reuses_original_host_receipt");
             }
             AssistantJson.WriteAtomic(Path.Combine(dataRoot,"assistant-action-result.json"),new{ok=true,checks=passed,liveModelCalls=0});return 0;
         }
