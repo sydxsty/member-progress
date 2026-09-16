@@ -6,6 +6,8 @@ using Cloud.Unum.USearch;
 namespace StudentProgress.WeChat;
 
 // Embeddings are a local search index only. Raw messages and originals remain authoritative.
+internal sealed class WeChatIndexItemException(string message) : Exception(message) { }
+
 internal sealed class WeChatEmbedding : IDisposable
 {
     readonly string modelRoot,indexPath;
@@ -42,7 +44,7 @@ internal sealed class WeChatEmbedding : IDisposable
             // Official BAAI ONNX already exports dense_vecs/sentence_embedding. A hidden-state graph uses token 0 (CLS).
             var output=result.FirstOrDefault(x=>x.Name is "sentence_embedding" or "dense_vecs")??result.First();
             var tensor=output.AsTensor<float>();var values=tensor.ToArray();if(values.Length<Dimensions)throw new InvalidDataException("相似度模型输出维度不正确。");
-            var vector=values.Take(Dimensions).ToArray();double norm=Math.Sqrt(vector.Sum(x=>(double)x*x));if(norm<=0||!double.IsFinite(norm))throw new InvalidDataException("相似度模型没有生成有效向量。");for(int i=0;i<vector.Length;i++)vector[i]/=(float)norm;cancellation.ThrowIfCancellationRequested();return vector;
+            var vector=values.Take(Dimensions).ToArray();double norm=Math.Sqrt(vector.Sum(x=>(double)x*x));if(norm<=0||!double.IsFinite(norm))throw new WeChatIndexItemException("此段文字未生成有效向量，已跳过；可手动重试。");for(int i=0;i<vector.Length;i++)vector[i]/=(float)norm;cancellation.ThrowIfCancellationRequested();return vector;
         }
     }
     internal void EnsureIndex(WeChatStore store,bool rebuild=false)

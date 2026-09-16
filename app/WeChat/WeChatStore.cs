@@ -31,7 +31,7 @@ internal sealed partial class WeChatStore : IDisposable
         CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS message_aliases(alias TEXT PRIMARY KEY,messageId TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-        """);
+        """);EnsureIndexPolicy();
     }
     static SqliteConnection Open(string path) {var c=new SqliteConnection(new SqliteConnectionStringBuilder {DataSource=path,Mode=SqliteOpenMode.ReadWriteCreate,Pooling=false}.ToString());c.Open();using var cmd=c.CreateCommand();cmd.CommandText="PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=15000;";cmd.ExecuteNonQuery();return c;}
     internal static string S(JsonNode? n,string key,string fallback="")=>n?[key] is JsonValue v&&v.TryGetValue<string>(out var s)?s:fallback;
@@ -70,22 +70,23 @@ internal sealed partial class WeChatStore : IDisposable
         lock(gate)
         {
             var id=S(message,"id");var text=S(message,"text");var payload=message.DeepClone().AsObject();payload.Remove("attachments");
-            var serialized=payload.ToJsonString();using var old=Command("SELECT payload FROM messages WHERE id=$id",("$id",id));if(old.ExecuteScalar() is string prior&&prior==serialized)return false;
-            Run("INSERT INTO messages(id,conversationId,senderId,whenMs,kind,text,payload,importedAt) VALUES($id,$c,$s,$w,$k,$t,$p,$ia) ON CONFLICT(id) DO UPDATE SET text=excluded.text,payload=excluded.payload,revision=revision+1,importedAt=excluded.importedAt",("$id",id),("$c",S(message,"conversationId")),("$s",S(message,"senderId")),("$w",DateTimeOffset.Parse(S(message,"when")).ToUnixTimeMilliseconds()),("$k",S(message,"kind")),("$t",text),("$p",serialized),("$ia",DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-            var conv=Conversation(S(message,"conversationId"));SetChunks(id,"",S(conv,"name")+" · "+S(message,"senderName")+"\n"+text);return true;
+            var serialized=payload.ToJsonString();using var old=Command("SELECT payload FROM messages WHERE id=$id",("$id",id));var prior=old.ExecuteScalar() as string;if(prior==serialized)return false;
+            var previous=prior==null?null:Parse(prior);bool changed=previous==null||new[]{"text","rawContent","kind","senderId","when","voiceTranscript"}.Any(key=>S(previous,key)!=S(payload,key))||!JsonNode.DeepEquals(previous["isSelf"],payload["isSelf"])||CompletedVoiceText(previous)!=CompletedVoiceText(payload);
+            Run("INSERT INTO messages(id,conversationId,senderId,whenMs,kind,text,payload,importedAt) VALUES($id,$c,$s,$w,$k,$t,$p,$ia) ON CONFLICT(id) DO UPDATE SET text=excluded.text,payload=excluded.payload,kind=excluded.kind,senderId=excluded.senderId,whenMs=excluded.whenMs,conversationId=excluded.conversationId,revision=revision+$changed,importedAt=CASE WHEN $changed=1 THEN excluded.importedAt ELSE importedAt END",("$id",id),("$c",S(message,"conversationId")),("$s",S(message,"senderId")),("$w",DateTimeOffset.Parse(S(message,"when")).ToUnixTimeMilliseconds()),("$k",S(message,"kind")),("$t",text),("$p",serialized),("$ia",DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),("$changed",changed?1:0));
+            SetChunks(id,"",MessageIndexText(message));return changed;
         }
     }
     internal void UpsertFile(JsonObject file,string sourcePath,string storedName,string hash,string extracted)
     {
         lock(gate)
         {
-            var id=S(file,"id");using var old=Command("SELECT hash,payload FROM files WHERE id=$id",("$id",id));using var r=old.ExecuteReader();string? oldHash=null,oldPayload=null;if(r.Read()){oldHash=r.GetString(0);oldPayload=r.GetString(1);}r.Close();
-            // Never lose a previously downloaded original when WeChat later clears its cache.
+            var id=S(file,"id");using var old=Command("SELECT hash,payload,extractedText,sourcePath,storedName FROM files WHERE id=$id",("$id",id));using var reader=old.ExecuteReader();string? oldHash=null,oldPayload=null,oldText=null,oldSource=null,oldStored=null;if(reader.Read()){oldHash=reader.GetString(0);oldPayload=reader.GetString(1);oldText=reader.GetString(2);oldSource=reader.GetString(3);oldStored=reader.GetString(4);}reader.Close();
             if(storedName.Length==0&&oldHash?.Length>0)return;
-            var payload=file.ToJsonString();if(oldHash==hash&&oldPayload==payload)return;
+            var payload=file.ToJsonString();if(oldHash==hash&&oldPayload==payload&&oldText==extracted&&oldSource==sourcePath&&oldStored==storedName)return;
+            var previous=oldPayload==null?null:Parse(oldPayload);bool contentChanged=previous==null||oldHash!=hash||oldText!=extracted||S(previous,"name")!=S(file,"name")||S(previous,"type")!=S(file,"type");
             Run("INSERT INTO files(id,messageId,name,size,hash,storedName,sourcePath,extractedText,payload) VALUES($id,$m,$n,$s,$h,$sn,$src,$t,$p) ON CONFLICT(id) DO UPDATE SET name=excluded.name,size=excluded.size,hash=excluded.hash,storedName=excluded.storedName,sourcePath=excluded.sourcePath,extractedText=excluded.extractedText,payload=excluded.payload",("$id",id),("$m",S(file,"messageId")),("$n",S(file,"name")),("$s",file["size"]?.GetValue<long>()??0),("$h",hash),("$sn",storedName),("$src",sourcePath),("$t",extracted),("$p",payload));
-            Run("UPDATE messages SET importedAt=$now WHERE id=$id",("$now",DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),("$id",S(file,"messageId")));
-            var msg=Message(S(file,"messageId"));SetChunks(S(file,"messageId"),id,S(file,"name")+"\n"+S(msg,"text")+"\n"+extracted);
+            if(contentChanged)Run("UPDATE messages SET importedAt=$now WHERE id=$id",("$now",DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),("$id",S(file,"messageId")));
+            var msg=Message(S(file,"messageId"));SetChunks(S(file,"messageId"),id,S(msg,"kind")=="voice"||S(file,"type")=="voice"?"":S(file,"name")+"\n"+S(msg,"text")+"\n"+extracted);
         }
     }
     static IEnumerable<string> Split(string text)
@@ -101,11 +102,10 @@ internal sealed partial class WeChatStore : IDisposable
     static bool IsCjk(char c)=>c>='\u3400'&&c<='\u9fff';
     void SetChunks(string messageId,string fileId,string text)
     {
-        using var transaction=db.BeginTransaction();
-        using(var old=Command("SELECT id,text FROM chunks WHERE messageId=$m AND fileId=$f",("$m",messageId),("$f",fileId))){using var reader=old.ExecuteReader();var rows=new List<(long,string)>();while(reader.Read())rows.Add((reader.GetInt64(0),reader.GetString(1)));reader.Close();foreach(var (id,t) in rows)Run("INSERT INTO chunk_fts(chunk_fts,rowid,tokens) VALUES('delete',$id,$t)",("$id",id),("$t",Tokens(t)));}
-        Run("DELETE FROM chunks WHERE messageId=$m AND fileId=$f",("$m",messageId),("$f",fileId));
-        int n=0;foreach(var part in Split(text)){Run("INSERT INTO chunks(messageId,fileId,ordinal,text) VALUES($m,$f,$n,$t)",("$m",messageId),("$f",fileId),("$n",n++),("$t",part));Run("INSERT INTO chunk_fts(rowid,tokens) VALUES(last_insert_rowid(),$t)",("$t",Tokens(part)));}
-        transaction.Commit();TouchVectorRevision();
+        var parts=Split(text).ToArray();var old=new List<(long Id,string Text)>();using(var command=Command("SELECT id,text FROM chunks WHERE messageId=$m AND fileId=$f ORDER BY ordinal",("$m",messageId),("$f",fileId))){using var reader=command.ExecuteReader();while(reader.Read())old.Add((reader.GetInt64(0),reader.GetString(1)));}
+        // Metadata-only refreshes keep IDs, embeddings and any persisted failure state.
+        if(old.Select(x=>x.Text).SequenceEqual(parts,StringComparer.Ordinal))return;
+        using var transaction=db.BeginTransaction();foreach(var (id,prior) in old)DeleteIndexChunk(id,prior);InsertChunks(messageId,fileId,text);transaction.Commit();TouchVectorRevision();
     }
     internal JsonObject? Message(string id,bool includeHostPaths=false)
     {
@@ -142,7 +142,7 @@ internal sealed partial class WeChatStore : IDisposable
         lock(gate){using var c=Command("SELECT f.id FROM files f JOIN messages m ON m.id=f.messageId WHERE f.storedName<>'' ORDER BY m.whenMs");using var r=c.ExecuteReader();var ids=new List<string>();while(r.Read())ids.Add(r.GetString(0));r.Close();return new JsonArray(ids.Select(id=>(JsonNode?)File(id,true)).ToArray());}
     }
     internal List<(long Id,string Text)> PendingChunks(int limit=64)
-    {lock(gate){using var c=Command("SELECT id,text FROM chunks WHERE vector IS NULL ORDER BY id LIMIT $l",("$l",limit));using var r=c.ExecuteReader();var a=new List<(long,string)>();while(r.Read())a.Add((r.GetInt64(0),r.GetString(1)));return a;}}
+    {lock(gate){using var c=Command("SELECT id,text FROM chunks WHERE vector IS NULL AND NOT EXISTS(SELECT 1 FROM chunk_failures f WHERE f.chunkId=chunks.id) ORDER BY id LIMIT $l",("$l",limit));using var r=c.ExecuteReader();var a=new List<(long,string)>();while(r.Read())a.Add((r.GetInt64(0),r.GetString(1)));return a;}}
     internal void SetVector(long id,float[] v){lock(gate){var bytes=new byte[v.Length*4];Buffer.BlockCopy(v,0,bytes,0,bytes.Length);Run("UPDATE chunks SET vector=$v WHERE id=$id",("$v",bytes),("$id",id));Run("INSERT INTO meta(key,value) VALUES('vectorRevision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1");}}
     void TouchVectorRevision(){Run("INSERT INTO meta(key,value) VALUES('vectorRevision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1");SetMeta("vectorDirty","1");}
     internal IEnumerable<(long Id,float[] Vector)> AllVectors()
@@ -185,10 +185,10 @@ internal sealed partial class WeChatStore : IDisposable
             BackupTo(recovery);db.Dispose();
             try{System.IO.File.Copy(source,databasePath+".restoring",true);if(System.IO.File.Exists(databasePath+"-wal"))System.IO.File.Delete(databasePath+"-wal");if(System.IO.File.Exists(databasePath+"-shm"))System.IO.File.Delete(databasePath+"-shm");System.IO.File.Move(databasePath+".restoring",databasePath,true);}
             catch{System.IO.File.Copy(recovery,databasePath,true);throw;}
-            finally{db=Open(databasePath);Run("CREATE INDEX IF NOT EXISTS ix_chunks_pending ON chunks(id) WHERE vector IS NULL");}
+            finally{db=Open(databasePath);EnsureIndexPolicy();}
         }
     }
     internal void BackupTo(string destination){lock(gate){using var target=Open(destination);db.BackupDatabase(target);using var c=target.CreateCommand();c.CommandText="PRAGMA wal_checkpoint(TRUNCATE)";c.ExecuteNonQuery();}}
-    internal void Reload(){lock(gate){db.Dispose();db=Open(databasePath);Run("CREATE INDEX IF NOT EXISTS ix_chunks_pending ON chunks(id) WHERE vector IS NULL");}}
+    internal void Reload(){lock(gate){db.Dispose();db=Open(databasePath);EnsureIndexPolicy();}}
     public void Dispose(){lock(gate)db.Dispose();}
 }

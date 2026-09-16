@@ -110,7 +110,7 @@ internal static class WeChatImageMaterialsChecks
         Check(File.Exists(MaterialPath(imageFile,"originalFile"))&&Hash(MaterialPath(imageFile,"originalFile"))==Hash(originalPath),"native_materials_keep_encrypted_source_separate_from_readable_image");
         Check(pendingFile["file"]==null&&File.Exists(MaterialPath(pendingFile,"originalFile"))&&S(pendingFile,"readStatus").Contains("尚未成功解码"),"undecoded_image_is_explicit_and_not_misrepresented_as_readable");
         Check(!jsonl.Contains("private-reader-source")&&!jsonl.Contains("sourcePath")&&!jsonl.Contains("storedName")&&!jsonl.Contains("originalStoredName")&&jsonl.Contains("rawContent"),"native_materials_keep_source_content_without_host_file_paths");
-        Check(wx.AnalysisMessages(DateTimeOffset.Now.AddMinutes(-2),false).OfType<JsonObject>().Any(m=>S(m,"id")=="image-message"),"updated_image_message_is_available_to_reminder_analysis_batch");
+        Check(wx.AnalysisMessages(DateTimeOffset.Now.AddHours(-24),DateTimeOffset.Now).Any(m=>S(m.Message,"id")=="image-message"),"recent_received_image_is_available_to_reminder_analysis_batch");
         var selection=Obj(new{references=new[]{new{scopeType="student",scopeId="member"}}});string businessWorkspace=Path.Combine(directory,"business-materials");
         await app.WriteBusinessReferenceMaterialsAsync(selection,businessWorkspace,CancellationToken.None);
         var businessIndex=JsonNode.Parse(File.ReadAllText(Path.Combine(businessWorkspace,"archives","0001","archive.json")))!;

@@ -38,7 +38,7 @@ public sealed partial class WeChatService : IDisposable
     internal static string S(JsonNode? n,string key,string fallback="")=>WeChatStore.S(n,key,fallback);
     internal static JsonObject Clone(JsonObject o)=>o.DeepClone().AsObject();
     internal static int I(JsonNode? n,string k,int fallback)=>n?[k] is JsonValue v&&v.TryGetValue<int>(out var x)?x:fallback;
-    static JsonObject Defaults()=>new(){["enabled"]=true,["syncMinutes"]=1,["checkReminders"]=true,["checkMinutes"]=60,["archiveFrom"]=DateTime.Today.ToString("yyyy-MM-dd"),["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
+    static JsonObject Defaults()=>new(){["enabled"]=true,["syncMinutes"]=1,["checkReminders"]=true,["checkMinutes"]=60,["reminderLookbackHours"]=24,["archiveFrom"]=DateTime.Today.ToString("yyyy-MM-dd"),["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
     internal static string NormalizeArchiveFrom(string value)
     {
         if(value is "" or "all")return "all";
@@ -66,7 +66,7 @@ public sealed partial class WeChatService : IDisposable
             var original=JsonNode.Parse(File.ReadAllText(p))!.AsObject();var next=UpgradeConfiguration(original);
             if(!JsonNode.DeepEquals(original,next))
             {
-                var previous=Path.Combine(root,original["archiveFrom"]==null?"config.pre-global-date.json":"config.pre-v15.json");if(!File.Exists(previous))File.Copy(p,previous);
+                var previous=Path.Combine(root,original["archiveFrom"]==null?"config.pre-global-date.json":original["syncMinutes"]==null?"config.pre-v15.json":"config.pre-v16.json");if(!File.Exists(previous))File.Copy(p,previous);
                 WriteJson(p,next);
             }
             return next;
@@ -83,6 +83,7 @@ public sealed partial class WeChatService : IDisposable
             next["enabled"]=B(incoming,"enabled",B(config,"enabled",true));
             next["syncMinutes"]=NormalizeSyncMinutes(incoming["syncMinutes"],NormalizeSyncMinutes(config["syncMinutes"]));
             next["checkReminders"]=B(incoming,"checkReminders",B(config,"checkReminders",true));
+            next["reminderLookbackHours"]=NormalizeReminderLookbackHours(incoming["reminderLookbackHours"],NormalizeReminderLookbackHours(config["reminderLookbackHours"]));
             next["archiveFrom"]=NormalizeArchiveFrom(S(incoming,"archiveFrom",S(config,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"))));
             var minutes=I(incoming,"checkMinutes",I(config,"checkMinutes",60));if(minutes==0)next["checkReminders"]=false;next["checkMinutes"]=minutes==0?60:Math.Clamp(minutes,5,1440);
             if(incoming["selectedConversationIds"] is JsonArray ids)next["selectedConversationIds"]=new JsonArray(ids.Select(x=>x?.GetValue<string>()??"").Where(x=>store.Conversation(x)!=null).Distinct().Select(x=>(JsonNode?)JsonValue.Create(x)).ToArray());
@@ -188,7 +189,7 @@ public sealed partial class WeChatService : IDisposable
     JsonObject NormalizeMessage(JsonObject raw,string accountId,string conversationId)
     {
         var time=S(raw,"time");if(!DateTimeOffset.TryParse(time,out var when))when=DateTimeOffset.FromUnixTimeSeconds(Long(raw,"timestamp",0));var extId=S(raw,"id");if(extId.Length==0)throw new InvalidDataException("微信读取组件返回了缺少稳定标识的消息。");
-        return new(){["id"]=store.CanonicalMessageId(accountId,conversationId,extId,S(raw["source"],"serverId")),["externalId"]=extId,["accountId"]=accountId,["conversationId"]=conversationId,["senderId"]=S(raw,"senderId"),["senderName"]=S(raw,"senderName"),["isSelf"]=B(raw,"isSelf"),["when"]=when.ToString("O"),["kind"]=S(raw,"type","text"),["text"]=S(raw,"text"),["rawContent"]=S(raw,"rawContent"),["source"]=raw["source"]?.DeepClone()};
+        return new(){["id"]=store.CanonicalMessageId(accountId,conversationId,extId,S(raw["source"],"serverId")),["externalId"]=extId,["accountId"]=accountId,["conversationId"]=conversationId,["senderId"]=S(raw,"senderId"),["senderName"]=S(raw,"senderName"),["isSelf"]=B(raw,"isSelf"),["when"]=when.ToString("O"),["kind"]=S(raw,"type","text"),["text"]=S(raw,"text"),["rawContent"]=S(raw,"rawContent"),["voiceTranscript"]=S(raw,"voiceTranscript"),["voiceTranscriptSource"]=S(raw,"voiceTranscriptSource"),["voiceTranscriptStatus"]=S(raw,"voiceTranscriptStatus"),["source"]=raw["source"]?.DeepClone()};
     }
     internal string StoredPath(string name)
     {

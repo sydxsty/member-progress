@@ -114,7 +114,7 @@ public sealed partial class WeChatService
     static JsonObject AssistantFileMetadata(JsonObject source)=>Pick(source,"id","messageId","name","size","type","status","mime","decodeStatus","isThumbnail","available","originalName","originalSize","conversationId","senderName","when");
     static JsonObject AssistantMessage(JsonObject source)
     {
-        var result=Pick(source,"id","conversationId","senderId","senderName","isSelf","when","kind","text","rawContent","conversationName","score","excerpt","fileId");result["attachments"]=new JsonArray((source["attachments"] as JsonArray??new()).OfType<JsonObject>().Select(f=>(JsonNode?)AssistantFileMetadata(f)).ToArray());return result;
+        var result=Pick(source,"id","conversationId","senderId","senderName","isSelf","when","kind","text","rawContent","voiceTranscript","voiceTranscriptSource","voiceTranscriptStatus","conversationName","score","excerpt","fileId");result["attachments"]=new JsonArray((source["attachments"] as JsonArray??new()).OfType<JsonObject>().Select(f=>(JsonNode?)AssistantFileMetadata(f)).ToArray());return result;
     }
     static void SanitizeMessageRows(JsonObject result,string key)=>result[key]=new JsonArray((result[key] as JsonArray??new()).OfType<JsonObject>().Select(m=>(JsonNode?)AssistantMessage(m)).ToArray());
 

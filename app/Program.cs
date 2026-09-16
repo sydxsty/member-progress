@@ -23,6 +23,11 @@ internal static class Program
             return;
         }
         var dataRoot = Path.GetFullPath(Argument(args, "--data-dir") ?? Path.Combine(AppContext.BaseDirectory, "Data"));
+        if (args.Contains("--v16-test"))
+        {
+            if (Argument(args, "--data-dir") == null) { Environment.Exit(1); return; }
+            Environment.Exit(V16Checks.Run(dataRoot, Argument(args, "--v16-check-part"))); return;
+        }
         if (args.Contains("--v15-test") || args.Contains("--v15-live-test") || args.Contains("--v15-actions-test"))
         {
             var connection = Argument(args, "--connection-from");

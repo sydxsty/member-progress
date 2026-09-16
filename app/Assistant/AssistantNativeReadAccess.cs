@@ -5,7 +5,8 @@ namespace StudentProgress.Assistant;
 internal sealed class AssistantNativeReadAccess(JsonArray descriptions,
     Func<string, JsonObject, string, CancellationToken, Task<JsonObject>> reader)
 {
-    internal async Task<string> RunAsync(CodexRunner runner, string executable, string workspace, JsonObject connection, string prompt, CancellationToken cancellation)
+    internal async Task<string> RunAsync(CodexRunner runner, string executable, string workspace, JsonObject connection, string prompt, CancellationToken cancellation,
+        Action<CodexProgressEvent>? progress = null)
     {
         string session = Path.Combine(Path.GetTempPath(), "MemberProgressCodex", Guid.NewGuid().ToString("N"));
         try
@@ -18,7 +19,7 @@ internal sealed class AssistantNativeReadAccess(JsonArray descriptions,
                     try { return CodexToolResult.Json(await reader(AssistantJson.Text(d["name"]), call.Arguments, workspace, ct).ConfigureAwait(false)); }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception ex) { return CodexToolResult.Text(ex is InvalidOperationException or ArgumentException ? ex.Message : "本次查询未完成。", false); }
-                }, null, cancellation).ConfigureAwait(false);
+                }, progress, cancellation).ConfigureAwait(false);
             return result.Answer;
         }
         finally { try { if (Directory.Exists(session)) Directory.Delete(session, true); } catch (IOException) { } catch (UnauthorizedAccessException) { } }

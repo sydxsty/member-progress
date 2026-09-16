@@ -17,7 +17,10 @@ internal static class WeChatChecks
         var oldWhen=DateTimeOffset.Now.AddDays(-20);var when=DateTimeOffset.Now.AddMinutes(-1);var m1=new JsonObject{["id"]="m1",["accountId"]=account,["conversationId"]=conversation,["senderId"]=external,["senderName"]="小王",["isSelf"]=false,["kind"]="text",["text"]="明天下午两点到南湖开会，记得带项目报告。",["when"]=when.ToString("O"),["rawContent"]="完整来源正文"};
         Check(store.UpsertMessage(m1),"首次读取插入聊天");Check(!store.UpsertMessage(m1),"再次读取同一记录不会重复或反复重建索引");
         var m2=m1.DeepClone().AsObject();m2["id"]="m2";m2["text"]="历史回填的聊天";m2["when"]=oldWhen.ToString("O");store.UpsertMessage(m2);
-        Check(service.AnalysisMessages(DateTimeOffset.Now.AddMinutes(-1),false).Count==2,"增量分析按导入时间接收历史回填");Check(service.AnalysisMessages(DateTimeOffset.MinValue,true).Count==1,"首次提醒分析仅自动处理最近七天");
+        var batchAt=DateTimeOffset.Now;
+        Check(service.AnalysisMessages(batchAt.AddHours(-24),batchAt).Count==1,"提醒分析按真实消息时间排除历史回填");
+        var own=m1.DeepClone().AsObject();own["id"]="own";own["isSelf"]=true;store.UpsertMessage(own);
+        Check(service.AnalysisMessages(batchAt.AddHours(-24),DateTimeOffset.Now).Count==1,"提醒分析只将收到消息作为新事项触发");
         var body=System.Text.Encoding.UTF8.GetBytes("这是项目报告的完整原件。\n南湖会议实验结果。");var hash=Convert.ToHexString(SHA256.HashData(body)).ToLowerInvariant();var stored=hash+".txt";await File.WriteAllBytesAsync(Path.Combine(service.DataDirectory,"files",stored),body);
         var f=new JsonObject{["id"]="f1",["messageId"]="m1",["name"]="南湖项目报告.txt",["size"]=(long)body.Length,["type"]="file",["available"]=true};store.UpsertFile(f,"C:\\private-source.txt",stored,hash,System.Text.Encoding.UTF8.GetString(body));
         Check(store.KeywordCandidates("南湖").Count>0,"两字中文能检索聊天和文件正文");
@@ -29,7 +32,7 @@ internal static class WeChatChecks
         var workspace=Path.Combine(isolatedRoot,"evidence");var manifest=await service.WriteReferenceWorkspaceAsync(new JsonArray(reference.DeepClone()),workspace,CancellationToken.None);Check(manifest["originalFileCount"]!.GetValue<int>()==1,"Codex资料包含原文件");var original=Directory.GetFiles(Path.Combine(workspace,"wechat","originals")).Single(x=>!x.EndsWith(".extracted.txt"));Check((await File.ReadAllBytesAsync(original)).SequenceEqual(body),"核对使用与微信保存文件相同的完整原件");
         var backup=Path.Combine(isolatedRoot,"wechat-materials.zip");await service.HandleAsync("wechat.export",new(){["path"]=backup});using(var zip=System.IO.Compression.ZipFile.OpenRead(backup)){Check(zip.GetEntry("records.sqlite")!=null&&zip.Entries.All(e=>e.FullName is not("config.json" or "suggestions.json")),"独立微信导出只包含资料，设置交由通用导出");}
         store.SaveConversation(new(){["id"]=conversation,["accountId"]=account,["externalId"]=external,["name"]="改过的备注",["kind"]="friend"});Check(WeChatStore.S(service.Configuration["bindings"]?.AsArray().First(),"conversationId")==conversation,"修改微信备注不破坏成员关联");
-        await service.HandleAsync("wechat.import",new(){["path"]=backup});Check(store.Counts()["messages"]!.GetValue<long>()==2&&store.File("f1",true)!=null,"独立资料恢复保留消息和文件");
+        await service.HandleAsync("wechat.import",new(){["path"]=backup});Check(store.Counts()["messages"]!.GetValue<long>()==3&&store.File("f1",true)!=null,"独立资料恢复保留消息和文件");
         var around=await service.HandleAsync("wechat.messages",new(){["conversationId"]=conversation,["around"]="m1"});Check((around["messages"] as JsonArray)!.Any(x=>WeChatStore.S(x,"id")=="m1"),"搜索结果可以跳到原聊天附近");
         JsonObject? modelResult=null;
         if(embeddingTest)

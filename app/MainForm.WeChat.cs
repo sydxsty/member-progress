@@ -21,6 +21,7 @@ public sealed partial class MainForm
                 _service.GetAssistantConnection, _service.CreateAssistantReminders, () => _assistant?.Snapshot()["busy"]?.GetValue<bool>() == true);
             _wechat.StateChanged += OnWeChatStateChanged;
             _wechat.ProgressChanged += OnWeChatProgressChanged;
+            _wechat.AnalysisProgressChanged += OnWeChatAnalysisProgressChanged;
         }
         catch
         {
@@ -34,6 +35,13 @@ public sealed partial class MainForm
         if(IsDisposed || !IsHandleCreated)return;
         try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"]="wechat.progress",["progress"]=_wechat?.ProgressSnapshot() }))); }
         catch(InvalidOperationException) { }
+    }
+
+    void OnWeChatAnalysisProgressChanged()
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"] = "wechat.analysis.progress", ["progress"] = _wechat?.AnalysisProgressSnapshot() }))); }
+        catch (InvalidOperationException) { }
     }
 
     void OnWeChatStateChanged()

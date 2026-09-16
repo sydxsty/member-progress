@@ -26,22 +26,20 @@ public sealed partial class WeChatService
         HashSet<string>? ids=reference["messageIds"] is JsonArray a?new(a.Select(x=>x!.GetValue<string>())):null;
         return store.ReadMessages(S(reference,"conversationId"),through:Long(reference,"through",long.MaxValue),ids:ids,host:host);
     }
-    internal JsonArray AnalysisMessages(DateTimeOffset importedSince,bool firstRun)
-    {
-        var selected=Selected();var from=firstRun?DateTimeOffset.Now.AddDays(-7).ToUnixTimeMilliseconds():0;
-        return new JsonArray(store.AnalysisMessages(importedSince.ToUnixTimeMilliseconds(),from).Where(m=>selected.Contains(S(m,"conversationId"))).Select(m=>{m["conversationName"]=S(store.Conversation(S(m,"conversationId")),"name");return (JsonNode?)m;}).ToArray());
-    }
+    internal IReadOnlyList<WeChatAnalysisMessage> AnalysisMessages(DateTimeOffset from, DateTimeOffset through)
+        => store.SuggestionMessages(Selected(), from, through);
     // Raw source evidence, including original XML and local files, is supplied to native Codex.
-    public async Task<JsonObject> WriteReferenceWorkspaceAsync(JsonArray references,string workspace,CancellationToken ct)
+    public async Task<JsonObject> WriteReferenceWorkspaceAsync(JsonArray references,string workspace,CancellationToken ct,Action<long,int>? onProgress=null)
     {
         Directory.CreateDirectory(workspace);var targetRoot=Path.Combine(workspace,"wechat");Directory.CreateDirectory(targetRoot);var originals=Path.Combine(targetRoot,"originals");Directory.CreateDirectory(originals);var sources=new JsonArray();var copied=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);var imageFiles=new HashSet<string>();
+        long preparedMessages=0;
         async Task<string> CopyOriginalAsync(string stored,string id,string name)
         {
             var source=StoredPath(stored);if(source.Length==0||!File.Exists(source))return "";
             if(copied.TryGetValue(stored,out var existing))return existing;
             var safeName=Path.GetFileName(name.Replace('\\','/'));foreach(char invalid in Path.GetInvalidFileNameChars())safeName=safeName.Replace(invalid,'_');if(safeName.Length>150)safeName=safeName[..130]+Path.GetExtension(safeName);if(safeName.Length==0)safeName="文件"+Path.GetExtension(stored);
             var relative="wechat/originals/"+id+"-"+safeName;
-            await using var src=new FileStream(source,FileMode.Open,FileAccess.Read,FileShare.Read,81920,true);await using var dst=new FileStream(Path.Combine(workspace,relative.Replace('/',Path.DirectorySeparatorChar)),FileMode.Create,FileAccess.Write,FileShare.None,81920,true);await src.CopyToAsync(dst,ct);copied[stored]=relative;return relative;
+            await using var src=new FileStream(source,FileMode.Open,FileAccess.Read,FileShare.Read,81920,true);await using var dst=new FileStream(Path.Combine(workspace,relative.Replace('/',Path.DirectorySeparatorChar)),FileMode.Create,FileAccess.Write,FileShare.None,81920,true);await src.CopyToAsync(dst,ct);copied[stored]=relative;onProgress?.Invoke(preparedMessages,copied.Count);return relative;
         }
         foreach(var item in references.OfType<JsonObject>())
         {
@@ -74,7 +72,7 @@ public sealed partial class WeChatService
                         }
                         sanitized.Remove("extractedText");files.Add(sanitized);
                     }
-                    message["attachments"]=files;await writer.WriteLineAsync(message.ToJsonString().AsMemory(),ct);count++;
+                    message["attachments"]=files;await writer.WriteLineAsync(message.ToJsonString().AsMemory(),ct);count++;preparedMessages++;onProgress?.Invoke(preparedMessages,copied.Count);
                 }
             }
             sources.Add(new JsonObject{["scopeType"]="wechat",["scopeId"]=id,["title"]=S(reference,"title"),["messagesFile"]="wechat/"+filename,["messageCount"]=count});

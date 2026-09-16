@@ -95,7 +95,7 @@ public sealed partial class MainForm : Form
             _service.StateChanged -= OnStateChanged;
             _notifications.StatusChanged -= OnStateChanged;
             if (_assistant != null) { _assistant.StateChanged -= OnAssistantStateChanged; _assistant.ProgressChanged -= OnAssistantProgressChanged; _assistant.Dispose(); }
-            if (_wechat != null) { _wechat.StateChanged -= OnWeChatStateChanged; _wechat.ProgressChanged -= OnWeChatProgressChanged; _wechat.Dispose(); }
+            if (_wechat != null) { _wechat.StateChanged -= OnWeChatStateChanged; _wechat.ProgressChanged -= OnWeChatProgressChanged; _wechat.AnalysisProgressChanged -= OnWeChatAnalysisProgressChanged; _wechat.Dispose(); }
             _notifications.Dispose(); _service.Dispose();
         };
     }

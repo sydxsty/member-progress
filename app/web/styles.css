@@ -71,3 +71,7 @@
 .student-heading>.member-reminders{flex:0 0 auto;max-width:96px}
 
 .attachment-card.with-image{display:flex;flex-direction:column;align-items:flex-start;max-width:290px}.attachment-card .archive-image{display:block;max-width:100%;width:auto;height:auto;max-height:210px;object-fit:contain;border-radius:5px;background:#f5f7fa}.attachment-card.with-image .attachment-info{width:100%;white-space:normal}
+
+/* Reveal reminder subjects through the existing day-width class; zoom needs no DOM rebuild. */
+.timeline-reminder-time{flex:none}.timeline-reminder .timeline-reminder-title{display:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:normal;font-variant-numeric:normal}
+.wide-days .timeline-reminder{justify-content:flex-start;gap:3px;padding:0 3px;font-size:9px}.wide-days .timeline-reminder .timeline-reminder-title{display:block;flex:1 1 auto;text-align:left}

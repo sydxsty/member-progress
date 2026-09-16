@@ -47,20 +47,23 @@ type Attachment struct {
 	IsThumbnail  bool   `json:"isThumbnail,omitempty"`
 }
 type Message struct {
-	ID               string         `json:"id"`
-	AccountID        string         `json:"accountId"`
-	ConversationID   string         `json:"conversationId"`
-	ConversationName string         `json:"conversationName"`
-	SenderID         string         `json:"senderId"`
-	SenderName       string         `json:"senderName"`
-	IsSelf           bool           `json:"isSelf"`
-	Time             string         `json:"time"`
-	Timestamp        int64          `json:"timestamp"`
-	Type             string         `json:"type"`
-	Text             string         `json:"text"`
-	RawContent       string         `json:"rawContent,omitempty"`
-	Attachments      []Attachment   `json:"attachments"`
-	Source           map[string]any `json:"source"`
+	ID                    string         `json:"id"`
+	AccountID             string         `json:"accountId"`
+	ConversationID        string         `json:"conversationId"`
+	ConversationName      string         `json:"conversationName"`
+	SenderID              string         `json:"senderId"`
+	SenderName            string         `json:"senderName"`
+	IsSelf                bool           `json:"isSelf"`
+	Time                  string         `json:"time"`
+	Timestamp             int64          `json:"timestamp"`
+	Type                  string         `json:"type"`
+	Text                  string         `json:"text"`
+	RawContent            string         `json:"rawContent,omitempty"`
+	Attachments           []Attachment   `json:"attachments"`
+	Source                map[string]any `json:"source"`
+	VoiceTranscript       string         `json:"voiceTranscript,omitempty"`
+	VoiceTranscriptSource string         `json:"voiceTranscriptSource,omitempty"`
+	VoiceTranscriptStatus string         `json:"voiceTranscriptStatus,omitempty"`
 }
 type exportResult struct {
 	OK               bool     `json:"ok"`
@@ -325,6 +328,14 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 					if sn == "" {
 						sn = m.Sender
 					}
+					transcript, transcriptSource, transcriptStatus := "", "", ""
+					if m.Type == 34 {
+						transcript, transcriptStatus = readVoiceTranscript(v.PackedInfoData)
+						transcriptSource = "wechat_local"
+						if transcriptStatus == "completed" {
+							m.Content = transcript
+						}
+					}
 					attachments := attachmentFor(a, media, m, sid)
 					for i := range attachments {
 						decoder.decode(&attachments[i])
@@ -358,7 +369,7 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 									return r, e
 								}
 								path := filepath.Join(dir, attachments[0].ID+".silk")
-								if e = os.WriteFile(path, data, 0600); e != nil {
+								if e = writeStableVoice(path, data); e != nil {
 									mr.Close()
 									return r, e
 								}
@@ -370,7 +381,10 @@ func export(ctx context.Context, a *Account, out, cache string, key []byte, sele
 							}
 						}
 					}
-					item := Message{sid, a.ID, talker, cn, m.Sender, sn, m.IsSelf, m.Time.Format(time.RFC3339), v.CreateTime, messageType(m), messageText(m), rawText(v.MessageContent), attachments, map[string]any{"database": base, "table": table, "localId": strconv.FormatInt(local, 10), "serverId": strconv.FormatInt(v.ServerID, 10), "sortSeq": strconv.FormatInt(v.SortSeq, 10)}}
+					item := Message{sid, a.ID, talker, cn, m.Sender, sn, m.IsSelf, m.Time.Format(time.RFC3339), v.CreateTime, messageType(m), messageText(m), rawText(v.MessageContent), attachments, map[string]any{"database": base, "table": table, "localId": strconv.FormatInt(local, 10), "serverId": strconv.FormatInt(v.ServerID, 10), "sortSeq": strconv.FormatInt(v.SortSeq, 10)}, transcript, transcriptSource, transcriptStatus}
+					if transcriptStatus == "completed" {
+						item.Source["voiceTranscriptField"] = "packed_info_data.5.2"
+					}
 					if e = enc.Encode(item); e != nil {
 						mr.Close()
 						return r, e
@@ -443,7 +457,11 @@ func attachmentFor(a *Account, d *sql.DB, m *messageModel.Message, sid string) [
 	key, _ := m.Contents["md5"].(string)
 	name, _ := m.Contents["title"].(string)
 	if name == "" {
-		name = messageText(m)
+		if typ == "voice" {
+			name = "[语音]"
+		} else {
+			name = messageText(m)
+		}
 	}
 	h := sha256.Sum256([]byte(sid + "\x00" + key))
 	att := Attachment{ID: hex.EncodeToString(h[:12]), Name: name, Type: typ, Status: "missing"}

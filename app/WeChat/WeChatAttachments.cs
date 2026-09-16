@@ -50,7 +50,8 @@ public sealed partial class WeChatService
                     var dest = StoredPath(stored); string mime = MediaPreview.Mime(dest);
                     if (mime.Length > 0) { f["mime"] = mime; f["status"] = "ready"; }
                     var ext = Path.GetExtension(name).ToLowerInvariant();
-                    if (size <= 64L * 1024 * 1024 && new[] { ".txt", ".md", ".markdown", ".csv", ".pdf", ".docx", ".pptx" }.Contains(ext))
+                    if (old != null && S(old,"hash") == hash) extracted=S(old,"extractedText");
+                    else if (size <= 64L * 1024 * 1024 && new[] { ".txt", ".md", ".markdown", ".csv", ".pdf", ".docx", ".pptx" }.Contains(ext))
                         extracted = AttachmentText.ExtractFull(await File.ReadAllBytesAsync(dest, ct), ext, ct).Text;
                 }
                 catch (IOException) { }

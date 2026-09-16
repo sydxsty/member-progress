@@ -2,8 +2,8 @@
   "file": "app/runtime/wechat-reader/member-wechat-reader.exe",
   "target": "windows-amd64",
   "go": "1.24.7",
-  "sha256": "9e5bb8eac1eb63ba4f852109277e05e3ec7600c4791b3fd631489c2ff045bdee",
-  "size": 11475968,
+  "sha256": "401a13a5b5f5c68786e6c814384af81a8fb319cc352eff7bac94650e1f20a4ea",
+  "size": 11480576,
   "upstreamCommit": "eb9572ee028cbaa72a50749b9dfe6630b317228f",
   "maskedKeyPatchCommit": "398f128b7f14365b146a312127d3fbce742d9e20",
   "source": "wechat-reader",
@@ -33,5 +33,11 @@
     "license": "LGPL-2.1-or-later",
     "sourceUrl": "https://github.com/FFmpeg/FFmpeg/tree/5a03dfa0f6",
     "buildRecipes": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-14-13-17"
+  },
+  "voiceSupport": {
+    "transcriptSource": "wechat-local-packed-info-field-5-child-2",
+    "completedState": 2,
+    "unknownStates": "skip-no-asr",
+    "unchangedSilkPreservesMtime": true
   }
 }
