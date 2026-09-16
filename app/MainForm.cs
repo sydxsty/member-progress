@@ -43,6 +43,8 @@ public sealed partial class MainForm : Form
         {
             _assistant = new AssistantService(dataRoot, AppContext.BaseDirectory, BuildAssistantContextWithWeChat, _service.GetAssistantConnection, _service.CreateAssistantReminders);
             _assistant.PrepareMaterialsAsync = PrepareAssistantMaterialsAsync;
+            _assistant.ArchiveWriter = _service.ImportAssistantArchive;
+            _assistant.ProgressChanged += OnAssistantProgressChanged;
             _assistant.StateChanged += OnAssistantStateChanged;
         }
         catch
@@ -92,8 +94,8 @@ public sealed partial class MainForm : Form
             if(_frp != null) { _frp.StateChanged -= OnMobileStateChanged; _frp.Dispose(); }
             _service.StateChanged -= OnStateChanged;
             _notifications.StatusChanged -= OnStateChanged;
-            if (_assistant != null) { _assistant.StateChanged -= OnAssistantStateChanged; _assistant.Dispose(); }
-            if (_wechat != null) { _wechat.StateChanged -= OnWeChatStateChanged; _wechat.Dispose(); }
+            if (_assistant != null) { _assistant.StateChanged -= OnAssistantStateChanged; _assistant.ProgressChanged -= OnAssistantProgressChanged; _assistant.Dispose(); }
+            if (_wechat != null) { _wechat.StateChanged -= OnWeChatStateChanged; _wechat.ProgressChanged -= OnWeChatProgressChanged; _wechat.Dispose(); }
             _notifications.Dispose(); _service.Dispose();
         };
     }
@@ -168,7 +170,12 @@ public sealed partial class MainForm : Form
             var action = request["action"]?.GetValue<string>() ?? "";
             var payload = request["payload"] as JsonObject ?? new JsonObject();
             JsonNode? result;
-            if (action.StartsWith("assistant.", StringComparison.Ordinal))
+            if (action == "assistant.file.open")
+            {
+                var path = _assistant?.ResolveChatAttachment(payload["attachmentId"]?.GetValue<string>() ?? "");
+                OpenLocalAttachment(path); result = new JsonObject { ["opened"] = true };
+            }
+            else if (action.StartsWith("assistant.", StringComparison.Ordinal))
             {
                 if (_assistant == null) throw new InvalidOperationException(_assistantError ?? "GPT 聊天模块暂时不可用。");
                 result = await _assistant.HandleAsync(action, payload);
@@ -179,11 +186,7 @@ public sealed partial class MainForm : Form
             else if (action == "file.open")
             {
                 var path = _service.ResolveAttachment(payload["id"]?.GetValue<string>() ?? "");
-                if (path is null || !File.Exists(path)) throw new InvalidOperationException("附件不存在或已移动。");
-                var blocked = new[] { ".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".scr", ".msi", ".msp", ".reg", ".dll", ".sys", ".cpl", ".msc" };
-                if (blocked.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("该附件属于程序或脚本，不能从档案中直接运行。");
-                Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+                OpenLocalAttachment(path);
                 result = new JsonObject { ["opened"] = true };
             }
             else if (action == "backup.export")
@@ -320,6 +323,20 @@ public sealed partial class MainForm : Form
         try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"] = "mobile", ["state"] = MobileSnapshot() }))); }
         catch(InvalidOperationException) { }
     }
+    static void OpenLocalAttachment(string? path)
+    {
+        if (path is null || !File.Exists(path)) throw new InvalidOperationException("附件不存在或已移动。");
+        var blocked = new[] { ".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".js", ".jse", ".wsf", ".wsh", ".hta", ".lnk", ".url", ".scr", ".msi", ".msp", ".reg", ".dll", ".sys", ".cpl", ".msc" };
+        if (blocked.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase)) throw new InvalidOperationException("该附件属于程序或脚本，不能直接运行。");
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+    }
+    void OnAssistantProgressChanged()
+    {
+        if(IsDisposed || !IsHandleCreated)return;
+        try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"]="assistant.progress",["progress"]=_assistant?.ProgressSnapshot() }))); }
+        catch(InvalidOperationException) { }
+    }
+
     private void Post(JsonObject message)
     {
         if (!_ready || IsDisposed) return;

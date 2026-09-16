@@ -25,6 +25,7 @@ internal sealed partial class WeChatStore : IDisposable
         CREATE INDEX IF NOT EXISTS ix_files_message ON files(messageId);
         CREATE TABLE IF NOT EXISTS chunks(id INTEGER PRIMARY KEY AUTOINCREMENT,messageId TEXT NOT NULL,fileId TEXT NOT NULL DEFAULT '',ordinal INTEGER NOT NULL,text TEXT NOT NULL,vector BLOB,UNIQUE(messageId,fileId,ordinal));
         CREATE INDEX IF NOT EXISTS ix_chunks_message ON chunks(messageId);
+        CREATE INDEX IF NOT EXISTS ix_chunks_pending ON chunks(id) WHERE vector IS NULL;
         CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(tokens,content='',tokenize='unicode61');
         CREATE TABLE IF NOT EXISTS source_refs(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
@@ -146,7 +147,7 @@ internal sealed partial class WeChatStore : IDisposable
     void TouchVectorRevision(){Run("INSERT INTO meta(key,value) VALUES('vectorRevision','1') ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1");SetMeta("vectorDirty","1");}
     internal IEnumerable<(long Id,float[] Vector)> AllVectors()
     {var a=new List<(long,float[])>();lock(gate){using var c=Command("SELECT id,vector FROM chunks WHERE vector IS NOT NULL");using var r=c.ExecuteReader();while(r.Read()){var b=(byte[])r[1];var v=new float[b.Length/4];Buffer.BlockCopy(b,0,v,0,b.Length);a.Add((r.GetInt64(0),v));}}return a;}
-    internal JsonObject Counts(){lock(gate){using var c=Command("SELECT (SELECT COUNT(*) FROM messages),(SELECT COUNT(*) FROM files),(SELECT COUNT(*) FROM chunks),(SELECT COUNT(*) FROM chunks WHERE vector IS NOT NULL)");using var r=c.ExecuteReader();r.Read();return new JsonObject{["messages"]=r.GetInt64(0),["files"]=r.GetInt64(1),["chunks"]=r.GetInt64(2),["indexed"]=r.GetInt64(3)};}}
+    internal JsonObject Counts(){lock(gate){using var c=Command("SELECT (SELECT COUNT(*) FROM messages),(SELECT COUNT(*) FROM files),(SELECT COUNT(*) FROM chunks),((SELECT COUNT(*) FROM chunks)-(SELECT COUNT(*) FROM chunks WHERE vector IS NULL))");using var r=c.ExecuteReader();r.Read();return new JsonObject{["messages"]=r.GetInt64(0),["files"]=r.GetInt64(1),["chunks"]=r.GetInt64(2),["indexed"]=r.GetInt64(3)};}}
     internal List<long> KeywordCandidates(string query,int limit=120,string conversationId="",string kind="",long from=long.MinValue,long through=long.MaxValue)
     {
         var terms=Regex.Matches(query.ToLowerInvariant(),@"[\p{L}\p{N}_]+").Select(m=>m.Value).Where(x=>x.Length>0).Take(12).ToArray();if(terms.Length==0)return [];
@@ -184,10 +185,10 @@ internal sealed partial class WeChatStore : IDisposable
             BackupTo(recovery);db.Dispose();
             try{System.IO.File.Copy(source,databasePath+".restoring",true);if(System.IO.File.Exists(databasePath+"-wal"))System.IO.File.Delete(databasePath+"-wal");if(System.IO.File.Exists(databasePath+"-shm"))System.IO.File.Delete(databasePath+"-shm");System.IO.File.Move(databasePath+".restoring",databasePath,true);}
             catch{System.IO.File.Copy(recovery,databasePath,true);throw;}
-            finally{db=Open(databasePath);}
+            finally{db=Open(databasePath);Run("CREATE INDEX IF NOT EXISTS ix_chunks_pending ON chunks(id) WHERE vector IS NULL");}
         }
     }
     internal void BackupTo(string destination){lock(gate){using var target=Open(destination);db.BackupDatabase(target);using var c=target.CreateCommand();c.CommandText="PRAGMA wal_checkpoint(TRUNCATE)";c.ExecuteNonQuery();}}
-    internal void Reload(){lock(gate){db.Dispose();db=Open(databasePath);}}
+    internal void Reload(){lock(gate){db.Dispose();db=Open(databasePath);Run("CREATE INDEX IF NOT EXISTS ix_chunks_pending ON chunks(id) WHERE vector IS NULL");}}
     public void Dispose(){lock(gate)db.Dispose();}
 }

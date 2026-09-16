@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
+using StudentProgress.Assistant;
 
 namespace StudentProgress;
 
@@ -60,6 +61,19 @@ public sealed partial class AppService
                     var path=Path.Combine(root,relative.Replace('/',Path.DirectorySeparatorChar));
                     if(File.Exists(path))zip.CreateEntryFromFile(path,relative,CompressionLevel.Optimal);
                 }
+                // Originals are immutable and never removed by conversation clear/undo. Collect
+                // them after history.json so a concurrently saved message cannot lose its files.
+                var chatFiles=Path.Combine(root,"assistant","files");
+                if(Directory.Exists(chatFiles))
+                {
+                    if((File.GetAttributes(chatFiles)&FileAttributes.ReparsePoint)!=0)throw new InvalidDataException("GPT 附件目录不能是链接。");
+                    foreach(var path in Directory.EnumerateFiles(chatFiles).Order(StringComparer.Ordinal))
+                    {
+                        var name=Path.GetFileName(path);
+                        if(!AssistantAttachment.SafeStoredName(name)||(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new InvalidDataException("GPT 附件路径无效。");
+                        zip.CreateEntryFromFile(path,AssistantAttachmentBackup.Prefix+name,CompressionLevel.Optimal);
+                    }
+                }
             }
             File.Move(temp,destination,true);
             return new JsonObject{["path"]=destination};
@@ -82,7 +96,7 @@ public sealed partial class AppService
                 {
                     var name=entry.FullName;
                     if(name=="attachments/"&&entry.Length==0)continue;
-                    if(name!="state.json"&&!(name.StartsWith("attachments/",StringComparison.Ordinal)&&SafeStoredName(name[12..]))&&!backupFiles.Contains(name))throw new InvalidDataException("备份包含无效路径。");
+                    if(name!="state.json"&&!(name.StartsWith("attachments/",StringComparison.Ordinal)&&SafeStoredName(name[12..]))&&!backupFiles.Contains(name)&&!AssistantAttachmentBackup.IsAttachmentPath(name))throw new InvalidDataException("备份包含无效路径。");
                     if(!seen.Add(name))throw new InvalidDataException("备份包含重复文件。");
                     total+=entry.Length;if(total>64L*1024*1024*1024||entry.Length>16L*1024*1024*1024)throw new InvalidDataException("备份解压后过大。");
                     var canonical=backupFiles.TryGetValue(name,out var registered)?registered:name;
@@ -98,6 +112,7 @@ public sealed partial class AppService
                 var path = Path.Combine(stage, relative.Replace('/', Path.DirectorySeparatorChar));
                 if (File.Exists(path)) validate(path);
             }
+            AssistantAttachmentBackup.Validate(stage);
             var incoming=ParseState(File.ReadAllText(Path.Combine(stage,"state.json")));
             foreach(var msg in AllArchiveMessages(incoming))foreach(var f in (msg["attachments"] as JsonArray??new()).OfType<JsonObject>())
                 if(!File.Exists(Path.Combine(stage,"attachments",S(f,"storedName"))))throw new InvalidDataException("备份缺少附件，尚未恢复。");
@@ -113,7 +128,11 @@ public sealed partial class AppService
             try
             {
                 Directory.Move(Path.Combine(stage,"attachments"),attachments);
-                foreach(var relative in backupFiles)
+                var stagedChatFiles=Path.Combine(stage,"assistant","files");
+                var restoreFiles=backupFiles.Concat(Directory.Exists(stagedChatFiles)
+                    ?Directory.EnumerateFiles(stagedChatFiles).Select(path=>AssistantAttachmentBackup.Prefix+Path.GetFileName(path))
+                    :Enumerable.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase);
+                foreach(var relative in restoreFiles)
                 {
                     var relativePath=relative.Replace('/',Path.DirectorySeparatorChar);
                     var from=Path.Combine(stage,relativePath);if(!File.Exists(from))continue;

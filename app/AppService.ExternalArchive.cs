@@ -7,15 +7,21 @@ namespace StudentProgress;
 public sealed partial class AppService
 {
     // In-process module boundary; never exposed as a file-path accepting WebView action.
-    public JsonObject ImportWeChatArchive(JsonObject payload)
+    public JsonObject ImportWeChatArchive(JsonObject payload) => ImportExternalArchive(payload, "wechat");
+
+    public JsonObject ImportAssistantArchive(JsonObject payload) => ImportExternalArchive(payload, "assistant");
+
+    JsonObject ImportExternalArchive(JsonObject payload, string sourceType)
     {
         JsonObject result;
         lock (gate)
         {
             ObjectDisposedException.ThrowIf(disposed, this);
             string requestId = Required(payload, "requestId", 500);
-            string messageId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("wechat:" + requestId))).ToLowerInvariant()[..32];
+            string messageId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceType + ":" + requestId))).ToLowerInvariant()[..32];
             var existing = AllArchiveMessages(state).FirstOrDefault(m => S(m, "id") == messageId);
+            if (sourceType == "assistant" && existing != null && !Rows("messages").Any(m => S(m, "id") == messageId))
+                throw new InvalidOperationException("这次请求的归档已被删除，不会重复添加；需要重新归档时请发送新请求。");
             // Late image decoding can add readable files to the same visible archive. A deleted
             // entry remains a tombstone; neither automatic sync nor an explicit reimport revives it.
             bool refresh = existing != null && B(payload, "refreshFiles") && Rows("messages").Any(m => S(m, "id") == messageId);
@@ -23,11 +29,11 @@ public sealed partial class AppService
                 return new JsonObject { ["messageId"] = messageId, ["scopeType"] = S(existing, "scopeType"), ["scopeId"] = S(existing, "scopeId"), ["replayed"] = true };
             string type = Required(payload, "scopeType"), id = Required(payload, "scopeId");
             Scope(type, id);
-            if (existing != null && (S(existing, "scopeType") != type || S(existing, "scopeId") != id || S(existing, "sourceType") != "wechat"))
+            if (existing != null && (S(existing, "scopeType") != type || S(existing, "scopeId") != id || S(existing, "sourceType") != sourceType))
                 throw new InvalidOperationException("微信归档来源不一致。");
             string text = S(payload, "text");
             var files = payload["files"] as JsonArray ?? new();
-            if (text.Length == 0 && files.Count == 0) throw new InvalidOperationException("没有可归档的微信内容。");
+            if (text.Length == 0 && files.Count == 0) throw new InvalidOperationException("没有可归档的内容。");
             var refs = new JsonArray();
             foreach (var reference in (payload["sourceReferences"] as JsonArray ?? new()).OfType<JsonObject>())
             {
@@ -43,9 +49,9 @@ public sealed partial class AppService
                 foreach (var file in files.OfType<JsonObject>())
                 {
                     string path = Path.GetFullPath(Required(file, "path", 32768));
-                    string allowed = Path.Combine(root, "wechat") + Path.DirectorySeparatorChar;
+                    string allowed = (sourceType == "wechat" ? Path.Combine(root, "wechat") : Path.Combine(root, "assistant", "files")) + Path.DirectorySeparatorChar;
                     if (!path.StartsWith(allowed, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
-                        throw new InvalidOperationException("微信文件暂时不可读取，请重新同步后重试。");
+                        throw new InvalidOperationException("原文件暂时不可读取，请确认资料仍在本机。");
                     for (var directory = new DirectoryInfo(Path.GetDirectoryName(path)!); directory != null && directory.FullName.StartsWith(allowed, StringComparison.OrdinalIgnoreCase); directory = directory.Parent)
                         if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new InvalidOperationException("微信文件位置无效。");
                     if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) throw new InvalidOperationException("微信文件位置无效。");
@@ -54,7 +60,7 @@ public sealed partial class AppService
                     if (extension.Length > 12 || extension.Any(c => !char.IsAsciiLetterOrDigit(c) && c != '.')) extension = "";
                     string hash;
                     using (var source = File.OpenRead(path)) hash = Convert.ToHexString(SHA256.HashData(source)).ToLowerInvariant();
-                    string stored = "wx-" + hash + extension;
+                    string stored = (sourceType == "wechat" ? "wx-" : "chat-") + hash + extension;
                     if (attachments.OfType<JsonObject>().Any(a => S(a, "storedName") == stored)) continue;
                     string destination = Path.Combine(root, "attachments", stored);
                     if (!File.Exists(destination))
@@ -79,7 +85,7 @@ public sealed partial class AppService
                 {
                 string time = DateTimeOffset.TryParse(S(payload, "createdAt"), out var at) ? at.ToString("O") : Now();
                 var message = new JsonObject { ["id"] = messageId, ["scopeType"] = type, ["scopeId"] = id, ["role"] = "user",
-                    ["text"] = text, ["createdAt"] = time, ["importedAt"] = Now(), ["sourceType"] = "wechat", ["sourceReferences"] = refs,
+                    ["text"] = text, ["createdAt"] = time, ["importedAt"] = Now(), ["sourceType"] = sourceType, ["sourceReferences"] = refs,
                     ["attachments"] = attachments, ["suggestions"] = new JsonArray() };
                 int insert = 0;
                 var messages = Arr("messages");

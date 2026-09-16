@@ -18,11 +18,13 @@ public static class ArchiveAgentChecks
             var archive = CodexRunner.CreateStartInfo("not-launched.exe", dataRoot, connection, archiveMode: true);
             string[] args = archive.ArgumentList.ToArray();
             bool Disabled(string feature) => args.Select((value, index) => value == feature && index > 0 && args[index - 1] == "--disable").Any(x => x);
-            Check(new[] { "shell_tool", "unified_exec", "view_image", "workspace_dependencies", "code_mode", "code_mode_host" }.All(feature => !Disabled(feature)) && args.Contains("workspace-write") && !string.Join("\n", args).Contains("mcp_servers") && !string.Join("\n", args).Contains("test-only-secret") && normal.ArgumentList.Contains("read-only"), "archive_uses_native_codex_tools_and_isolated_workspace_without_custom_mcp");
-            const string command = "{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}";
-            var regularEvents = new CodexEvents(); regularEvents.Accept(command);
-            var archiveEvents = new CodexEvents(true); archiveEvents.Accept(command);
-            Check(regularEvents.UnexpectedTool && !archiveEvents.UnexpectedTool && archiveEvents.ArchiveToolCalls == 1, "native_archive_tool_count_does_not_change_generic_chat_boundary");
+            Check(new[] { "shell_tool", "unified_exec", "view_image", "workspace_dependencies", "code_mode", "code_mode_host" }.All(feature => !Disabled(feature)) &&
+                args.Contains("app-server") && !string.Join("\n", args).Contains("mcp_servers") && !string.Join("\n", args).Contains("test-only-secret") &&
+                normal.ArgumentList.Contains("shell_tool") && archive.Environment["CODEX_HOME"] == normal.Environment["CODEX_HOME"], "archive_native_tools_share_private_app_server_transport");
+            var command = new JsonObject { ["item"] = new JsonObject { ["id"] = "command", ["type"] = "commandExecution", ["command"] = "fixture", ["status"] = "completed" } };
+            var regularEvents = new CodexEvents(); regularEvents.AcceptNotification("item/completed", command);
+            var archiveEvents = new CodexEvents(true); archiveEvents.AcceptNotification("item/completed", command);
+            Check(regularEvents.UnexpectedTool && !archiveEvents.UnexpectedTool && archiveEvents.ArchiveToolCalls == 1, "native_archive_tool_events_respect_enabled_capabilities");
             string originalRoot = Path.Combine(dataRoot, "source-attachments"), workspace = Path.Combine(dataRoot, "workspace"); Directory.CreateDirectory(originalRoot);
             string body = new string('x', 18000) + "ORIGINAL_TAIL"; byte[] bytes = Encoding.UTF8.GetBytes(body);
             File.WriteAllBytes(Path.Combine(originalRoot, "test.txt"), bytes);

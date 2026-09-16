@@ -11,7 +11,7 @@ public sealed partial class AppService
         {
             ObjectDisposedException.ThrowIf(disposed,this);
             var settings=(JsonObject)state["settings"]!;
-            return new JsonObject { ["baseUrl"]=S(settings,"baseUrl"),["model"]=S(settings,"model"),["key"]=ReadKey(),["apiMode"]=S(settings,"apiMode","responses") };
+            return new JsonObject { ["baseUrl"]=S(settings,"baseUrl"),["model"]=S(settings,"model"),["key"]=ReadKey(),["apiMode"]="responses" };
         }
     }
 

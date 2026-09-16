@@ -11,6 +11,7 @@ public sealed partial class AssistantService
         {
             var snapshot = Snapshot();
             snapshot.Remove("runtime");
+            snapshot.Remove("activity"); // Streaming changes must not invalidate mobile mutation versions.
             snapshot["version"] = MobileProtocol.Fingerprint(new JsonObject
             {
                 ["visible"] = snapshot.DeepClone(),

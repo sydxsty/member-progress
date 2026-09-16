@@ -20,12 +20,20 @@ public sealed partial class MainForm
             _wechat.ConfigureAgent(() => _service.BuildAssistantContext(new JsonObject { ["includeReminders"] = true, ["includeRecent"] = false }),
                 _service.GetAssistantConnection, _service.CreateAssistantReminders, () => _assistant?.Snapshot()["busy"]?.GetValue<bool>() == true);
             _wechat.StateChanged += OnWeChatStateChanged;
+            _wechat.ProgressChanged += OnWeChatProgressChanged;
         }
         catch
         {
             _wechat?.Dispose(); _wechat = null;
             _wechatError = "微信模块暂时不可用，已有微信资料和成员数据均已保留。";
         }
+    }
+
+    void OnWeChatProgressChanged()
+    {
+        if(IsDisposed || !IsHandleCreated)return;
+        try { BeginInvoke(new Action(() => Post(new JsonObject { ["type"]="wechat.progress",["progress"]=_wechat?.ProgressSnapshot() }))); }
+        catch(InvalidOperationException) { }
     }
 
     void OnWeChatStateChanged()

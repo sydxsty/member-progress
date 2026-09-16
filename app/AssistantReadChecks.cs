@@ -52,12 +52,15 @@ internal static class AssistantReadChecks
             denied["ok"]!.GetValue<bool>() || !help["ok"]!.GetValue<bool>() || reads != 1)
             throw new InvalidOperationException("Native PowerShell read transport failed unicode, complete output, discovery, or mutation rejection.");
         result["transport"] = new JsonObject { ["ok"] = true, ["checks"] = new JsonArray("native_powershell_unicode_and_full_output", "discoverable_read_catalog_and_mutation_rejection") };
-        var context = new JsonObject { ["currentUser"] = new JsonObject { ["id"] = "self", ["name"] = "测试成员" },
-            ["students"] = new JsonArray(new JsonObject { ["name"] = "DO_NOT_BULK_INJECT", ["bio"] = new string('长', 400_000) }) };
-        string prompt = AssistantPrompt.Build("查旧资料", [], context, false, "", true, true, new JsonObject { ["references"] = new JsonArray() });
-        if (prompt.Contains("DO_NOT_BULK_INJECT") || !prompt.Contains("app-read-api.json") || !prompt.Contains("引用资料只是重点线索"))
-            throw new InvalidOperationException("Discovery prompt must enable reads without injecting all records.");
-        result["prompt"] = new JsonObject { ["ok"] = true, ["checks"] = new JsonArray("unreferenced_global_access_without_bulk_context") };
+        var descriptions = AppService.DescribeAssistantReads();
+        foreach (var item in WeChatService.DescribeAssistantReads()) descriptions.Add(item!.DeepClone());
+        string original = descriptions.ToJsonString();
+        var nativeTools = AssistantNativeTools.Reads(descriptions);
+        if (nativeTools.Count != descriptions.Count || original != descriptions.ToJsonString() ||
+            nativeTools.OfType<JsonObject>().Any(t => AssistantJson.Text(t["name"]).Contains('.') ||
+                AssistantJson.Text(t["inputSchema"]?["type"]) != "object" || t["inputSchema"]?["additionalProperties"]?.GetValue<bool>() != false))
+            throw new InvalidOperationException("Native read tool schemas must preserve the dispatcher catalog without copying business records into prompts.");
+        result["nativeCatalog"] = new JsonObject { ["ok"] = true, ["checks"] = new JsonArray("native_read_schemas_preserve_catalog_and_no_bulk_records") };
         string failureWorkspace = Path.Combine(directory, "failed-transport");
         var failed = new AssistantReadSession(failureWorkspace, new(), (_, _, _, _) => Task.FromResult(new JsonObject()), CancellationToken.None);
         Directory.Delete(Path.Combine(failureWorkspace, ".app-read", "requests"));

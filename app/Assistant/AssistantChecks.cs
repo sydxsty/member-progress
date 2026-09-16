@@ -15,33 +15,25 @@ public static class AssistantChecks
                 throw new InvalidOperationException("Assistant checks require an empty isolated directory.");
             Directory.CreateDirectory(dataRoot);
             void Check(bool ok,string name){if(!ok)throw new InvalidOperationException(name);passed.Add(name);}
-            var events=new CodexEvents();
-            events.Accept("not JSON");
-            events.Accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Interim\"}}");
-            events.Accept("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Final answer\"}}");
-            events.Accept("{\"type\":\"turn.completed\"}");
-            Check(events.Completed&&events.Answer=="Final answer"&&!events.Failed,"jsonl_final_natural_language_answer");
-            var failure=new CodexEvents();failure.Accept("{\"type\":\"turn.failed\",\"error\":{\"message\":\"failed\"}}");
-            Check(failure.Failed&&failure.Error=="failed","jsonl_error_preserved");
-            failure.Accept("{\"type\":\"item.started\",\"item\":{\"type\":\"command_execution\"}}");
-            Check(failure.UnexpectedTool,"unexpected_tool_detected");
-            string whole=new string('x',12000)+"FULL_REFERENCE_END";
-            var context=new JsonObject
-            {
-                ["generatedAt"]=DateTimeOffset.Now.ToString("O"),
-                ["referencedArchives"]=new JsonArray(new JsonObject{["scopeType"]="student",["scopeId"]="a",["title"]="A",["messages"]=new JsonArray(new JsonObject{["text"]=whole})}),
-                ["recentArchives"]=new JsonArray(new JsonObject{["scopeType"]="student",["scopeId"]="b",["messages"]=new JsonArray(new JsonObject{["text"]=new string('z',30000)})})
-            };
-            string before=context.ToJsonString();
-            string prompt=AssistantPrompt.Build("Question",[],context);
-            Check(prompt.Contains(whole)&&context.ToJsonString()==before,"explicit_reference_complete_and_context_detached");
-            context["referencedArchives"]![0]!["messages"]![0]!["text"]=new string('x',400000);
-            bool rejected=false;try{AssistantPrompt.Build("Question",[],context);}catch(InvalidOperationException){rejected=true;}
-            Check(rejected,"oversize_reference_rejected_not_silently_shortened");
+            var progress = new List<CodexProgressEvent>();
+            var events = new CodexEvents(true, progress.Add);
+            events.SetThread("fixture-thread");
+            events.AcceptNotification("item/completed", new JsonObject { ["item"] = new JsonObject { ["id"] = "comment", ["type"] = "agentMessage", ["phase"] = "commentary", ["text"] = "Working" } });
+            events.AcceptNotification("item/completed", new JsonObject { ["item"] = new JsonObject { ["id"] = "answer", ["type"] = "agentMessage", ["phase"] = "final_answer", ["text"] = "Final answer" } });
+            events.AcceptNotification("turn/completed", new JsonObject { ["turn"] = new JsonObject { ["id"] = "fixture-turn", ["status"] = "completed", ["items"] = new JsonArray() } });
+            Check(events.Completed && events.Answer == "Final answer" && !events.Failed && progress.Any(e => e.Kind == "message.completed"), "native_final_and_commentary_are_separate");
+            var failure = new CodexEvents();
+            failure.AcceptNotification("turn/completed", new JsonObject { ["turn"] = new JsonObject { ["id"] = "failed-turn", ["status"] = "failed", ["error"] = new JsonObject { ["message"] = "failed" } } });
+            Check(failure.Failed && failure.Error == "failed", "native_failure_preserved");
+            failure.AcceptNotification("item/started", new JsonObject { ["item"] = new JsonObject { ["id"] = "command", ["type"] = "commandExecution", ["command"] = "fixture" } });
+            Check(failure.UnexpectedTool, "disabled_native_tool_detected");
             var connection=new JsonObject{["model"]="gpt-6-test",["baseUrl"]="https://example.invalid/v1",["key"]="assistant-test-secret",["apiMode"]="responses"};
             var start=CodexRunner.CreateStartInfo("not-launched.exe",dataRoot,connection);
             var arguments=start.ArgumentList.ToArray();
-            Check(arguments.Contains("--ignore-user-config")&&arguments.Contains("--ignore-rules")&&arguments.Contains("read-only")&&arguments.Contains("never")&&arguments.Contains("shell_tool")&&arguments.Contains("unified_exec")&&arguments.Contains("multi_agent")&&!string.Join(' ',arguments).Contains("assistant-test-secret")&&start.Environment[CodexRunner.KeyEnvironmentName]=="assistant-test-secret","readonly_cli_and_secret_only_in_child_environment");
+            Check(arguments.Contains("app-server") && arguments.Contains("--stdio") && arguments.Contains("shell_tool") && arguments.Contains("unified_exec") && arguments.Contains("multi_agent") &&
+                !string.Join(' ', arguments).Contains("assistant-test-secret") && start.Environment[CodexRunner.KeyEnvironmentName] == "assistant-test-secret" &&
+                start.Environment["CODEX_HOME"] == Path.Combine(Path.GetFullPath(dataRoot), ".codex-state") &&
+                start.Environment["CODEX_SQLITE_HOME"] == Path.Combine(Path.GetFullPath(dataRoot), ".codex-state", "sqlite"), "native_transport_private_state_and_child_provider_credential");
             var store=new AssistantStore(Path.Combine(dataRoot,"store"));
             var saved=new AssistantState{AutoUpdate=true,Interrupted=true,Messages=[new(){Role="user",Text="Preserved question",References=[new(){ScopeId="a",Title="A"}]}]};
             store.Save(saved);var restored=store.Load();

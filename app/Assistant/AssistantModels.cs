@@ -17,6 +17,10 @@ internal sealed class AssistantMessage
     public string Text { get; set; } = "";
     public string CreatedAt { get; set; } = DateTimeOffset.Now.ToString("O");
     public List<AssistantReference> References { get; set; } = [];
+    public List<AssistantAttachment> Attachments { get; set; } = [];
+    public List<JsonObject> ArchiveResults { get; set; } = [];
+    // Host receipts survive interruption and make retrying a tool idempotent.
+    public List<JsonObject> ToolReceipts { get; set; } = [];
     public bool IncludeReminders { get; set; } = true;
     public bool IncludeRecent { get; set; } = true;
     public string ReplyToMessageId { get; set; } = "";
@@ -54,6 +58,10 @@ internal sealed class AssistantTaskResult
 internal sealed class AssistantState
 {
     public int SchemaVersion { get; set; } = 1;
+    public string SessionId { get; set; } = Guid.NewGuid().ToString("N");
+    public string NativeThreadId { get; set; } = "";
+    public string ClearedSessionId { get; set; } = "";
+    public string ClearedNativeThreadId { get; set; } = "";
     public List<AssistantMessage> Messages { get; set; } = [];
     [System.Text.Json.Serialization.JsonIgnore]
     public bool AutoUpdate { get; set; }
@@ -119,6 +127,13 @@ internal sealed class AssistantStore
                 throw new InvalidDataException("不支持的聊天记录版本。");
             if (state.MobileReceipts == null || state.MobileReceipts.Any(r => r == null || r.RequestId.Length == 0 || r.Fingerprint.Length != 64))
                 throw new InvalidDataException("手机聊天的保存记录格式无效。");
+            if (!Guid.TryParseExact(state.SessionId,"N",out _) || state.ClearedSessionId.Length>0&&!Guid.TryParseExact(state.ClearedSessionId,"N",out _))
+                throw new InvalidDataException("聊天会话标识无效。");
+            foreach(var message in state.Messages.Concat(state.ClearedMessages))
+            {
+                message.Attachments ??= []; message.ToolReceipts ??= []; message.ArchiveResults ??= [];
+                if(message.Attachments.Any(f=>f==null||!AssistantAttachment.SafeStoredName(f.StoredName)))throw new InvalidDataException("聊天附件标识无效。");
+            }
             state.AutoUpdate = ReadAutoUpdate();
             if (state.Interrupted)
             {

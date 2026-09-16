@@ -20,6 +20,8 @@ public sealed partial class MainForm
         AssistantReadSession Open(string workspace, CancellationToken cancellation) => new(workspace, descriptions, ReadAssistantDataAsync, cancellation);
         _service.OpenReadSession = Open;
         if (_wechat != null) _wechat.OpenReadSession = Open;
+        _service.NativeReads = new AssistantNativeReadAccess(descriptions, ReadAssistantDataAsync);
+        if (_wechat != null) _wechat.NativeReads = new AssistantNativeReadAccess(descriptions, ReadAssistantDataAsync);
     }
 
     Task<JsonObject> ReadAssistantDataAsync(string operation, JsonObject args, string workspace, CancellationToken cancellation)

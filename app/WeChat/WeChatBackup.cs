@@ -27,7 +27,7 @@ public sealed partial class WeChatService
     }
     async Task<JsonObject> ImportAsync(string source,CancellationToken ct)
     {
-        if(!File.Exists(source))throw new InvalidOperationException("微信资料备份不存在。");await syncGate.WaitAsync(ct);try{await indexGate.WaitAsync(ct);}catch{syncGate.Release();throw;}var workspace=Path.Combine(root,"work","import-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(workspace);var recovery=Path.Combine(root,"recovery",DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")[..6]);Directory.CreateDirectory(recovery);
+        if(!File.Exists(source))throw new InvalidOperationException("微信资料备份不存在。");bool restored=false;await syncGate.WaitAsync(ct);try{await indexGate.WaitAsync(ct);}catch{syncGate.Release();throw;}var workspace=Path.Combine(root,"work","import-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(workspace);var recovery=Path.Combine(root,"recovery",DateTime.Now.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N")[..6]);Directory.CreateDirectory(recovery);
         try
         {
             await Task.Run(()=>
@@ -50,8 +50,8 @@ public sealed partial class WeChatService
                 var incomingFiles=Path.Combine(workspace,"files");if(Directory.Exists(incomingFiles))foreach(var f in Directory.EnumerateFiles(incomingFiles)){var target=Path.Combine(root,"files",Path.GetFileName(f));if(!File.Exists(target))File.Move(f,target);}
                 store.ReplaceFrom(Path.Combine(workspace,"validated.sqlite"),Path.Combine(recovery,"records.sqlite"));embedding.Reset();store.SetMeta("vectorDirty","1");
             },ct);
-            SetStatus("idle","微信资料已恢复");return new(){["ok"]=true,["counts"]=store.Counts()};
+            restored=true;SetStatus("idle","微信资料已恢复");return new(){["ok"]=true,["counts"]=store.Counts()};
         }
-        finally{try{Directory.Delete(workspace,true);}catch{}indexGate.Release();syncGate.Release();}
+        finally{try{Directory.Delete(workspace,true);}catch{}indexGate.Release();syncGate.Release();if(restored)_=IndexInBackgroundAsync();}
     }
 }

@@ -25,6 +25,7 @@ internal sealed class WeChatEmbedding : IDisposable
         session=new InferenceSession(Path.Combine(modelRoot,"model.onnx"),options);
         using var stream=File.OpenRead(Path.Combine(modelRoot,"sentencepiece.bpe.model"));tokenizer=SentencePieceTokenizer.Create(stream,false,false);
     }
+    internal void PrepareModel(CancellationToken cancellation=default){lock(gate){cancellation.ThrowIfCancellationRequested();EnsureModel();cancellation.ThrowIfCancellationRequested();}}
     internal long[] Tokenize(string text)
     {
         lock(gate){EnsureModel();var pieces=tokenizer!.EncodeToIds(text,false,false).Take(1022);return new long[]{0}.Concat(pieces.Select(x=>x==0?3L:x+1L)).Append(2).ToArray();}
@@ -53,7 +54,7 @@ internal sealed class WeChatEmbedding : IDisposable
             if(!rebuild&&store.Meta("vectorRevision","0")==store.Meta("indexRevision","-1")&&File.Exists(indexPath))try{index=new USearchIndex(indexPath);if(index.Dimensions()!=Dimensions){index.Dispose();index=null;}}catch{index=null;}
             if(index!=null)return;
             index=new USearchIndex(metricKind:MetricKind.Cos,quantization:ScalarKind.Float32,dimensions:Dimensions,connectivity:32,expansionAdd:128,expansionSearch:128);
-            var revision=store.Meta("vectorRevision","0");var rows=store.AllVectors();foreach(var (id,v) in rows)index.Add((ulong)id,v);SaveIndex();store.SetMeta("indexRevision",revision);
+            var snapshot=store.VectorSnapshot();foreach(var (id,v) in snapshot.Vectors)index.Add((ulong)id,v);SaveIndex();store.MarkIndexSaved(snapshot.Revision,clearDirty:true);
         }
     }
     internal void Add(long id,float[] vector){lock(gate){if(index==null)throw new InvalidOperationException("相似度索引尚未打开。");if(index.Contains((ulong)id))index.Remove((ulong)id);index.Add((ulong)id,vector);}}

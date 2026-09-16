@@ -2,183 +2,63 @@ using System.Text.Json.Nodes;
 
 namespace StudentProgress.Assistant;
 
-/// <summary>Small, isolated action/clear checks. Uses a fake response delegate and zero models.</summary>
+/// <summary>Offline native action schemas and host receipts. No language-based authorization simulator.</summary>
 public static class AssistantActionChecks
 {
     public static int Run(string dataRoot)
     {
-        var passed=new List<string>();
+        var passed = new List<string>();
         try
         {
-            if(Directory.Exists(dataRoot)&&Directory.EnumerateFileSystemEntries(dataRoot).Any())
+            if (Directory.Exists(dataRoot) && Directory.EnumerateFileSystemEntries(dataRoot).Any())
                 throw new InvalidOperationException("Assistant action checks require an empty isolated directory.");
             Directory.CreateDirectory(dataRoot);
-            void Check(bool ok,string name){if(!ok)throw new InvalidOperationException(name);passed.Add(name);}
-            void Reject(string input,string name){bool rejected=false;try{AssistantResponse.Parse(input);}catch(InvalidOperationException){rejected=true;}Check(rejected,name);}
-            const string question="请创建一条明天上午9点的全局提醒，内容为核对实验进展。";
-            string output=new JsonObject{["text"]="",["reminders"]=new JsonArray(new JsonObject{["scopeType"]="global",["title"]="核对实验进展",["when"]="2030-09-15T09:00:00+08:00",["repeat"]="once"})}.ToJsonString();
-            Check(AssistantResponse.Parse(output).Reminders.Count==1&&AssistantResponse.Parse("```json\n"+output+"\n```").Reminders.Count==1,"strict_envelope_and_single_json_fence");
-            Reject("{\"text\":\"ok\",\"text\":\"other\",\"reminders\":[]}","duplicate_json_keys_rejected");
-            var noTimezone=JsonNode.Parse(output)!.AsObject();noTimezone["reminders"]![0]!["when"]="2030-09-15T09:00:00";
-            Reject(noTimezone.ToJsonString(),"timezone_required");
-            Reject(output.Replace("\"global\"","\"project\""),"project_target_required");
-            Reject(output.Replace("\"repeat\":\"once\"","\"repeat\":\"once\",\"command\":\"ignored\""),"unknown_action_fields_rejected");
-            Check(AssistantResponse.HasExplicitCreationRequest(question)&&AssistantResponse.HasExplicitCreationRequest("明天9点提醒我交材料")&&
-                !AssistantResponse.HasExplicitCreationRequest("建议下一步干啥，先不要创建提醒")&&
-                !AssistantResponse.HasExplicitCreationRequest("解释“明天9点提醒我交材料”是什么意思")&&
-                !AssistantResponse.HasExplicitCreationRequest("请分析以下归档：明天9点提醒我交材料")&&
-                !AssistantResponse.HasExplicitCreationRequest("下午2点叫我，你会怎么做？给出plan")&&
-                !AssistantResponse.HasExplicitCreationRequest("先不要创建任务，给我一个计划")&&
-                AssistantResponse.HasExplicitCreationRequest("下午2点叫我")&&
-                AssistantResponse.HasExplicitCreationRequest("明天提醒我去南湖")&&
-                AssistantResponse.HasExplicitCreationRequest("10月22日-24日提醒我去CNCC")&&
-                AssistantResponse.HasExplicitCreationRequest("给彭泽顺创建明天的任务：去南湖"),"current_explicit_request_gate_excludes_quotes_advice_negatives_and_plans");
-            Check(AssistantResponse.SafeAdvice("已经创建提醒了").StartsWith("本次未"),"model_cannot_claim_unsaved_reminder_creation");
-            var receipts=new Dictionary<string,JsonObject>();int commits=0,calls=0;
-            JsonObject Create(JsonObject payload)
+            void Check(bool ok, string name) { if (!ok) throw new InvalidOperationException(name); passed.Add(name); }
+            void Reject(string input, string name)
             {
-                calls++;string id=AssistantJson.Text(payload["requestId"]);
-                if(receipts.TryGetValue(id,out var existing)){var replay=existing.DeepClone().AsObject();replay["replayed"]=true;return replay;}
-                commits++;
-                var input=payload["reminders"]![0]!.AsObject();
-                var receipt=new JsonObject{["reminders"]=new JsonArray(new JsonObject{["id"]="alarm-"+commits,["title"]=AssistantJson.Text(input["title"]),["when"]=AssistantJson.Text(input["when"]),["repeat"]="once",["scopeType"]=input["scopeType"]!.DeepClone(),["studentId"]=input["studentId"]?.DeepClone(),["scopeLabel"]="联调对象"}),["replayed"]=false};
-                receipts[id]=receipt.DeepClone().AsObject();return receipt;
+                bool rejected = false;
+                try { AssistantResponse.Parse(input); } catch (InvalidOperationException) { rejected = true; }
+                Check(rejected, name);
             }
-            JsonObject Context(JsonObject _)=>new(){["generatedAt"]="2030-09-14T12:00:00+08:00",
-                ["currentUser"]=new JsonObject{["id"]="self",["name"]="彭泽顺"},
-                ["students"]=new JsonArray(new JsonObject{["id"]="self",["name"]="彭泽顺"},new JsonObject{["id"]="other",["name"]="联调成员"}),
-                ["projects"]=new JsonArray(new JsonObject{["id"]="project-1",["name"]="联调项目"})};
-            static JsonObject Connection()=>new();
-            static void Await(Task task)=>task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
-            static JsonObject Do(AssistantService service,string action,JsonObject? payload=null)=>(service.HandleAsync(action,payload??new()).WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult() as JsonObject)!;
-            static void Finish(AssistantService service)
+
+            // Retained only to make old offline responseProvider fixtures readable.
+            string fixture = new JsonObject { ["text"] = "", ["reminders"] = new JsonArray(new JsonObject
+            { ["scopeType"] = "global", ["title"] = "核对进展", ["when"] = "2030-09-15T09:00:00+08:00", ["repeat"] = "once" }) }.ToJsonString();
+            Check(AssistantResponse.Parse(fixture).Reminders.Count == 1 && AssistantResponse.Parse("```json\n" + fixture + "\n```").Reminders.Count == 1, "legacy_offline_fixture_reader");
+            Reject("{\"text\":\"ok\",\"text\":\"other\",\"reminders\":[]}", "legacy_fixture_duplicate_fields_rejected");
+            Reject(fixture.Replace("2030-09-15T09:00:00+08:00", "2030-09-15T09:00:00"), "legacy_fixture_timezone_required");
+            Reject(fixture.Replace("\"repeat\":\"once\"", "\"repeat\":\"once\",\"command\":\"ignored\""), "legacy_fixture_unknown_action_fields_rejected");
+
+            var writes = AssistantNativeTools.Writes(schedule: true, archive: true);
+            var names = writes.OfType<JsonObject>().Select(t => AssistantJson.Text(t["name"])).ToHashSet(StringComparer.Ordinal);
+            Check(names.SetEquals(new[] { "app_task_create", "app_reminder_create", "app_archive_append" }), "native_writes_are_explicit_tools");
+            Check(AssistantNativeTools.Writes(false, false).Count == 0 && AssistantNativeTools.Writes(false, true).Count == 1, "native_catalog_tracks_host_capabilities");
+            var normalized = CodexAppServer.NormalizeTools(writes);
+            Check(normalized.All(t => AssistantJson.Text(t?["type"]) == "function") && !writes.OfType<JsonObject>().Any(t => t.ContainsKey("type")), "native_protocol_schemas_do_not_mutate_business_catalog");
+            var task = writes.OfType<JsonObject>().Single(t => AssistantJson.Text(t["name"]) == "app_task_create")["inputSchema"]!.AsObject();
+            var alarm = writes.OfType<JsonObject>().Single(t => AssistantJson.Text(t["name"]) == "app_reminder_create")["inputSchema"]!.AsObject();
+            Check(task["required"]!.AsArray().Select(AssistantJson.Text).SequenceEqual(new[] { "title", "start", "due" }) &&
+                alarm["required"]!.AsArray().Select(AssistantJson.Text).SequenceEqual(new[] { "title", "when" }), "date_tasks_and_clock_reminders_have_separate_native_schemas");
+
+            var receipt = new JsonObject
             {
-                var finished=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                void Changed(){if(service.Snapshot()["busy"]?.GetValue<bool>()!=true)finished.TrySetResult();}
-                service.StateChanged+=Changed;
-                try{Changed();Await(finished.Task);}finally{service.StateChanged-=Changed;}
-            }
-            string basic=Path.Combine(dataRoot,"basic");
-            using(var service=new AssistantService(basic,dataRoot,Context,Connection,Create,(_,_)=>Task.FromResult(output)))
-            {
-                Do(service,"assistant.send",new(){["text"]=question});Finish(service);
-                var messages=service.Snapshot()["messages"]!.AsArray();
-                Check(commits==1&&messages.Count==2&&messages[1]!["reminderResults"]!.AsArray().Count==1&&AssistantJson.Text(messages[1]!["text"])=="已创建 1 条提醒。","only_host_receipt_generates_creation_text_and_cards");
-                string original=messages.ToJsonString();Do(service,"assistant.clear");
-                Check(service.Snapshot()["messages"]!.AsArray().Count==0&&service.Snapshot()["canUndoClear"]!.GetValue<bool>()&&commits==1,"clear_recoverable_and_does_not_touch_reminders");
-                Do(service,"assistant.undo-clear");Check(service.Snapshot()["messages"]!.ToJsonString()==original&&!service.Snapshot()["canUndoClear"]!.GetValue<bool>(),"undo_restores_conversation_once");
-                Do(service,"assistant.clear");Do(service,"assistant.send",new(){["text"]="只分析归档中的提醒建议"});Finish(service);
-                Check(commits==1&&!service.Snapshot()["canUndoClear"]!.GetValue<bool>(),"new_question_invalidates_undo_and_advice_cannot_commit");
-                string history=Path.Combine(basic,"assistant","history.json"),saved=history+".saved";
-                var before=service.Snapshot()["messages"]!.ToJsonString();File.Move(history,saved);Directory.CreateDirectory(history);
-                bool failed=false;try{Do(service,"assistant.clear");}catch(IOException){failed=true;}catch(UnauthorizedAccessException){failed=true;}
-                finally{Directory.Delete(history);File.Move(saved,history);}
-                Check(failed&&service.Snapshot()["messages"]!.ToJsonString()==before,"failed_clear_save_preserves_original_conversation");
-            }
-            var entered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var blocked=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            using(var service=new AssistantService(Path.Combine(dataRoot,"cancel"),dataRoot,Context,Connection,Create,async(_,token)=>{entered.TrySetResult();return await blocked.Task.WaitAsync(token);}))
-            {
-                Do(service,"assistant.send",new(){["text"]=question});Await(entered.Task);Do(service,"assistant.clear");blocked.TrySetResult(output);
-                Check(commits==1&&service.Snapshot()["messages"]!.AsArray().Count==0&&!service.Snapshot()["busy"]!.GetValue<bool>(),"clear_cancels_before_commit_and_has_no_late_answer");
-                Do(service,"assistant.undo-clear");Check(service.Snapshot()["messages"]!.AsArray().Count==1,"cancelled_question_is_recoverable");
-            }
-            string retryRoot=Path.Combine(dataRoot,"retry");
-            var retryEntered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var retryGate=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);int responseCalls=0;
-            using(var service=new AssistantService(retryRoot,dataRoot,Context,Connection,Create,(_,_)=>{responseCalls++;retryEntered.TrySetResult();return responseCalls==1?retryGate.Task:Task.FromResult(output);}))
-            {
-                Do(service,"assistant.send",new(){["text"]=question});Await(retryEntered.Task);
-                string userId=AssistantJson.Text(service.Snapshot()["messages"]![0]!["id"]);
-                string history=Path.Combine(retryRoot,"assistant","history.json"),saved=history+".saved";File.Move(history,saved);Directory.CreateDirectory(history);
-                retryGate.SetResult(output);Finish(service);
-                Directory.Delete(history);File.Move(saved,history);
-                Check(commits==2&&service.Snapshot()["messages"]!.AsArray().Count==1,"host_commit_survives_answer_save_failure");
-                bool mismatch=false;try{Do(service,"assistant.send",new(){["retryMessageId"]=userId,["text"]="different question"});}catch(InvalidOperationException){mismatch=true;}
-                Check(mismatch,"retry_rejects_changed_question");
-                Do(service,"assistant.send",new(){["retryMessageId"]=userId});Finish(service);
-                Check(commits==2&&calls==3&&AssistantJson.Text(service.Snapshot()["messages"]![0]!["id"])==userId&&AssistantJson.Text(service.Snapshot()["messages"]![1]!["text"]).Contains("没有重复添加"),"retry_reuses_persisted_request_id_and_receipt_without_duplicates");
-            }
-            const string clarification="{\"text\":\"什么时候提醒你交材料？\",\"reminders\":[],\"needsReminderDetails\":true}";
-            int shortCalls=0,shortBefore=commits;
-            using(var service=new AssistantService(Path.Combine(dataRoot,"short-reply"),dataRoot,Context,Connection,Create,(_,_)=>Task.FromResult(++shortCalls==1?clarification:output)))
-            {
-                Do(service,"assistant.send",new(){["text"]="提醒我交材料"});Finish(service);
-                bool privateFieldsHidden=!service.Snapshot().ToJsonString().Contains("reminderRequestText")&&!service.Snapshot().ToJsonString().Contains("awaitingReminderDetails");
-                Do(service,"assistant.send",new(){["text"]="明天9点"});Finish(service);
-                Check(commits==shortBefore+1&&privateFieldsHidden&&service.Snapshot()["messages"]!.AsArray().Count==4,"short_time_reply_completes_trusted_pending_request_and_metadata_stays_private");
-            }
-            int clearShortCalls=0,clearShortBefore=commits;
-            using(var service=new AssistantService(Path.Combine(dataRoot,"cleared-pending"),dataRoot,Context,Connection,Create,(_,_)=>Task.FromResult(++clearShortCalls==1?clarification:output)))
-            {
-                Do(service,"assistant.send",new(){["text"]="提醒我交材料"});Finish(service);Do(service,"assistant.clear");
-                Do(service,"assistant.send",new(){["text"]="明天9点"});Finish(service);
-                Check(commits==clearShortBefore,"cleared_pending_request_cannot_authorize_a_short_reply");
-            }
-            int unrelatedCalls=0,unrelatedBefore=commits;
-            using(var service=new AssistantService(Path.Combine(dataRoot,"unrelated-pending"),dataRoot,Context,Connection,Create,(_,_)=>Task.FromResult(++unrelatedCalls<=2?clarification:output)))
-            {
-                Do(service,"assistant.send",new(){["text"]="提醒我交材料"});Finish(service);
-                Do(service,"assistant.send",new(){["text"]="分析最近归档，建议下一步干啥"});Finish(service);
-                Do(service,"assistant.send",new(){["text"]="明天9点"});Finish(service);
-                Check(commits==unrelatedBefore,"unrelated_advice_breaks_pending_authorization_even_if_model_requests_details");
-            }
-            string taskOutput=new JsonObject{["text"]="",["reminders"]=new JsonArray(),["tasks"]=new JsonArray(new JsonObject
-                {["title"]="去南湖",["start"]="2030-09-15",["due"]="2030-09-15",["studentIds"]=new JsonArray("self")})}.ToJsonString();
-            var dayTask=AssistantResponse.Parse(taskOutput);
-            var cncc=JsonNode.Parse(taskOutput)!.AsObject();cncc["tasks"]![0]!["title"]="去CNCC";cncc["tasks"]![0]!["start"]="2030-10-22";cncc["tasks"]![0]!["due"]="2030-10-24";
-            Check(dayTask.Tasks.Count==1&&dayTask.Reminders.Count==0&&AssistantResponse.Parse(cncc.ToJsonString()).Tasks[0]!["due"]!.GetValue<string>()=="2030-10-24","single_day_and_date_range_tasks_do_not_require_clock_time");
-            Reject(taskOutput.Replace("2030-09-15","2030-02-30"),"task_calendar_date_required");
-            Reject(taskOutput.Replace("\"start\":\"2030-09-15\"","\"start\":\"2030-09-16\""),"reversed_task_dates_rejected");
-            Reject(taskOutput.Replace("2030-09-15","2030-09-15T09:00:00+08:00"),"task_date_only_format_required");
-            var personal=AssistantTargets.Resolve(AssistantResponse.Parse(output),"下午2点叫我",Context(new()));
-            Check(personal.Reminders[0]!["scopeType"]!.GetValue<string>()=="student"&&personal.Reminders[0]!["studentId"]!.GetValue<string>()=="self"&&
-                AssistantTargets.Resolve(AssistantResponse.Parse(output),"明天9点提醒检查材料",Context(new())).Reminders[0]!["studentId"]!.GetValue<string>()=="self", "personal_and_unspecified_reminders_are_for_current_member_even_if_model_proposes_global");
-            var incorrectOwner=JsonNode.Parse(taskOutput)!.AsObject();incorrectOwner["tasks"]![0]!["studentIds"]=new JsonArray("other");
-            Check(AssistantTargets.Resolve(AssistantResponse.Parse(incorrectOwner.ToJsonString()),"明天提醒我去南湖",Context(new())).Tasks[0]!["studentIds"]![0]!.GetValue<string>()=="self","date_only_personal_task_is_bound_to_current_member");
-            Check(AssistantTargets.Resolve(AssistantResponse.Parse(output),question,Context(new())).Reminders[0]!["scopeType"]!.GetValue<string>()=="global"&&
-                AssistantTargets.Resolve(AssistantResponse.Parse(incorrectOwner.ToJsonString()),"给联调成员创建明天的任务：去南湖",Context(new())).Tasks[0]!["studentIds"]![0]!.GetValue<string>()=="other","explicit_global_and_other_member_targets_are_preserved");
-            var projectAlarm=JsonNode.Parse(output)!.AsObject();projectAlarm["reminders"]![0]!["scopeType"]="project";projectAlarm["reminders"]![0]!["projectId"]="project-1";
-            Check(AssistantTargets.Resolve(AssistantResponse.Parse(projectAlarm.ToJsonString()),"给联调项目创建明天9点的提醒",Context(new())).Reminders[0]!["projectId"]!.GetValue<string>()=="project-1","explicit_project_target_is_preserved");
-            bool missingSelf=false;try{AssistantTargets.Resolve(dayTask,"明天提醒我去南湖",new());}catch(InvalidOperationException e){missingSelf=e.Message.Contains("当前用户");}
-            Check(missingSelf,"missing_current_member_never_falls_back_to_global");
-            int taskCommits=0;var taskReceipts=new Dictionary<string,JsonObject>();
-            JsonObject CreateTask(JsonObject payload)
-            {
-                string id=AssistantJson.Text(payload["requestId"]);
-                if(taskReceipts.TryGetValue(id,out var saved)){var replay=saved.DeepClone().AsObject();replay["replayed"]=true;return replay;}
-                Check(AssistantJson.Text(payload["expectedCurrentStudentId"])=="self","task_creation_checks_current_member_setting_snapshot");
-                taskCommits++;var input=payload["tasks"]![0]!.DeepClone().AsObject();input["id"]="task-"+taskCommits;input["scopeLabel"]="彭泽顺";
-                var receipt=new JsonObject{["reminders"]=new JsonArray(),["tasks"]=new JsonArray(input)};taskReceipts[id]=receipt.DeepClone().AsObject();return receipt;
-            }
-            string taskRoot=Path.Combine(dataRoot,"personal-tasks");
-            using(var service=new AssistantService(taskRoot,dataRoot,Context,Connection,CreateTask,(_,_)=>Task.FromResult(taskOutput)))
-            {
-                Do(service,"assistant.send",new(){["text"]="明天提醒我去南湖"});Finish(service);
-                var answer=service.Snapshot()["messages"]![1]!;
-                Check(taskCommits==1&&answer["taskResults"]!.AsArray().Count==1&&answer["reminderResults"]!.AsArray().Count==0&&AssistantJson.Text(answer["text"])=="已创建 1 个任务。","task_success_text_and_cards_come_only_from_host_receipt");
-                service.Reload();Do(service,"assistant.clear");Do(service,"assistant.undo-clear");
-                Check(service.Snapshot()["messages"]![1]!["taskResults"]![0]!["id"]!.GetValue<string>()=="task-1","task_result_survives_reload_and_clear_undo");
-                Do(service,"assistant.send",new(){["text"]="针对这个任务：下午2点叫我，你会怎么做？给出plan"});Finish(service);
-                Check(taskCommits==1,"plan_question_cannot_commit_even_when_model_proposes_task");
-            }
-            int taskRuns=0;var taskEntered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var taskGate=new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-            string taskRetryRoot=Path.Combine(dataRoot,"task-retry");
-            using(var service=new AssistantService(taskRetryRoot,dataRoot,Context,Connection,CreateTask,(_,_)=>{taskRuns++;taskEntered.TrySetResult();return taskRuns==1?taskGate.Task:Task.FromResult(taskOutput);}))
-            {
-                Do(service,"assistant.send",new(){["text"]="明天提醒我去南湖"});Await(taskEntered.Task);
-                string userId=AssistantJson.Text(service.Snapshot()["messages"]![0]!["id"]);
-                string history=Path.Combine(taskRetryRoot,"assistant","history.json"),saved=history+".saved";File.Move(history,saved);Directory.CreateDirectory(history);
-                taskGate.SetResult(taskOutput);Finish(service);Directory.Delete(history);File.Move(saved,history);
-                Do(service,"assistant.send",new(){["retryMessageId"]=userId});Finish(service);
-                Check(taskCommits==2&&AssistantJson.Text(service.Snapshot()["messages"]![1]!["text"]).Contains("没有重复添加"),"task_retry_after_history_save_failure_reuses_original_host_receipt");
-            }
-            AssistantJson.WriteAtomic(Path.Combine(dataRoot,"assistant-action-result.json"),new{ok=true,checks=passed,liveModelCalls=0});return 0;
+                ["reminders"] = new JsonArray(new JsonObject { ["id"] = "alarm-1", ["title"] = "每月核对", ["scopeType"] = "student", ["studentId"] = "self", ["repeat"] = "monthly", ["monthDay"] = 9 }),
+                ["tasks"] = new JsonArray(new JsonObject { ["id"] = "task-1", ["title"] = "会议", ["start"] = "2030-10-22", ["due"] = "2030-10-24", ["studentIds"] = new JsonArray("self"), ["scopeLabel"] = "本人" })
+            };
+            var reminders = AssistantResponse.ReadReceipt(receipt); var tasks = AssistantResponse.ReadTaskReceipt(receipt);
+            Check(reminders.Single().Id == "alarm-1" && reminders.Single().MonthDay == 9 && tasks.Single().Id == "task-1" && tasks.Single().StudentIds.SequenceEqual(new[] { "self" }), "host_receipt_fields_preserved_for_visible_cards");
+            bool missingAlarmId = false, missingTaskId = false;
+            var invalid = receipt.DeepClone().AsObject(); invalid["reminders"]![0]!.AsObject().Remove("id"); invalid["tasks"]![0]!.AsObject().Remove("id");
+            try { AssistantResponse.ReadReceipt(invalid); } catch (InvalidOperationException) { missingAlarmId = true; }
+            try { AssistantResponse.ReadTaskReceipt(invalid); } catch (InvalidOperationException) { missingTaskId = true; }
+            Check(missingAlarmId && missingTaskId, "unsaved_records_cannot_be_shown_as_saved_cards");
+            Check(AssistantResponse.ReadTaskReceipt(new JsonObject { ["reminders"] = new JsonArray() }).Count == 0, "old_reminder_only_receipts_stay_readable");
+            AssistantJson.WriteAtomic(Path.Combine(dataRoot, "assistant-action-result.json"), new { ok = true, checks = passed, liveModelCalls = 0 }); return 0;
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             Directory.CreateDirectory(dataRoot);
-            AssistantJson.WriteAtomic(Path.Combine(dataRoot,"assistant-action-result.json"),new{ok=false,checks=passed,error=e.Message,liveModelCalls=0});return 1;
+            AssistantJson.WriteAtomic(Path.Combine(dataRoot, "assistant-action-result.json"), new { ok = false, checks = passed, error = e.Message, liveModelCalls = 0 }); return 1;
         }
     }
 }

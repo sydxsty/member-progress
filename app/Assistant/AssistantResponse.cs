@@ -5,9 +5,10 @@ using System.Text.RegularExpressions;
 
 namespace StudentProgress.Assistant;
 
-/// <summary>The model proposes an action; the host alone validates and commits it.</summary>
+/// <summary>Legacy offline fixture parser and current host receipt readers. Production replies are plain native Codex messages.</summary>
 internal sealed record AssistantResponse(string Text, JsonArray Reminders, JsonArray Tasks, bool NeedsReminderDetails = false)
 {
+    // Used only by the injected offline responseProvider fixtures, never by the live Codex path.
     internal static AssistantResponse Parse(string output)
     {
         string json=output.Trim();
@@ -87,36 +88,6 @@ internal sealed record AssistantResponse(string Text, JsonArray Reminders, JsonA
         {throw Invalid();}
     }
 
-    internal static bool HasExplicitCreationRequest(string question)
-    {
-        // Quoted examples and pasted blocks cannot independently authorize a write.
-        string current=Regex.Replace(question,@"```[\s\S]*?```|[“\""「『][^”\""」』]*[”\""」』]","");
-        if(IsPlanOnly(current))return false;
-        if(Regex.IsMatch(current,@"(?:不要|别|不必|无需|不需要|勿|暂不|先不).{0,24}(?:创建|新建|新增|添加|设置|设定|安排|提醒|闹钟|任务|叫我)"))return false;
-        if(Regex.IsMatch(current,@"^\s*(?:请|帮我)?(?:分析|总结|翻译|解释|比较|评估|推荐|建议|举例|例如|比如|如何|怎么|怎样)")&&
-            !Regex.IsMatch(current,@"(?:并|然后|同时|再)(?:请|帮我)?(?:创建|新建|添加|设置)"))return false;
-        return Regex.IsMatch(current,@"(?:创建|新建|新增|添加|设置|设定|设个|加个|加一[条个]|安排).{0,40}(?:提醒|闹钟|任务)|(?:请|帮我|麻烦).{0,30}(?:提醒|叫我)|提醒(?:我|我们)|(?:今天|明天|后天|每[天周月]|下周|[0-9一二三四五六七八九十]+[点时日号]).{0,40}(?:提醒|叫我)|(?:叫我).{0,20}(?:[0-9一二三四五六七八九十]+[点时]|明天|今天|下午|上午)");
-    }
-    internal static bool IsPlanOnly(string question)=>Regex.IsMatch(question,
-        @"(?:给出|给个|写个|制定|先|仅|只).{0,12}(?:plan\b|计划|方案)|(?:不要|不必|无需|先不|暂不).{0,12}(?:执行|实际设置|实际创建)|你会怎么做|你会如何做",RegexOptions.IgnoreCase);
-    internal static bool IsReminderDetailReply(string question,JsonObject activeContext)
-    {
-        string value=question.Trim().TrimEnd('。','！','!');
-        if(value.Length==0||value.Length>80||value.Contains('\n')||value.Contains('\r'))return false;
-        if(value is "全局" or "全局提醒" or "所有成员" or "我" or "我自己" or "当前用户" or "当前成员")return true;
-        foreach(string key in new[]{"students","projects"})
-            if(activeContext[key] is JsonArray records&&records.OfType<JsonObject>().Any(r=>AssistantJson.Text(r["name"])==value))return true;
-        // Entire reply must consist of date/time/recurrence words. Advice or a pasted
-        // instruction with a time somewhere inside cannot continue a pending action.
-        string rest=Regex.Replace(value,@"(?:下个月|这个月|每个月|今天|明天|后天|大后天|今晚|明早|明晚|上午|下午|晚上|早上|中午|凌晨|傍晚|本周|下周|这周|本月|下月|每天|每周|每月|每年|每隔|星期|礼拜|时间是|定在|就定|就是|设置为|改成|改到|[每隔周月年天日号点时分秒刻半整一二三四五六七八九十百两零〇是吧]|[0-9０-９:TtZz+\-/.：，,\s])","");
-        return rest.Length==0&&Regex.IsMatch(value,@"[0-9０-９一二三四五六七八九十两]|今天|明天|后天|明早|明晚|今晚|下周|本周|下月|本月|上午|下午|晚上|早上|中午|凌晨|傍晚|每天|每周|每月|每年");
-    }
-    internal static string SafeAdvice(string text)
-    {
-        if(Regex.IsMatch(text,@"(?:已|已经|成功).{0,8}(?:创建|添加|设置|设定|安排|删除|修改|清空|更新).{0,10}(?:提醒|闹钟|任务)|(?:提醒|闹钟|任务).{0,8}(?:已创建|已添加|已设置|已修改|已删除|设置好了|创建好了)"))
-            return "本次未创建或修改提醒、任务。需要创建时，请直接告诉我事项和日期或时间。";
-        return text;
-    }
     internal static List<AssistantReminderResult> ReadReceipt(JsonObject receipt)
     {
         if(receipt["reminders"] is not JsonArray records||records.Count>8)

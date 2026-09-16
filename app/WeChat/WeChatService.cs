@@ -32,13 +32,13 @@ public sealed partial class WeChatService : IDisposable
         root=Path.Combine(Path.GetFullPath(dataRoot),"wechat");this.baseDir=baseDir;this.businessSnapshot=businessSnapshot;this.archiveImporter=archiveImporter;
         Directory.CreateDirectory(root);Directory.CreateDirectory(Path.Combine(root,"files"));config=ReadConfig();store=new(root);embedding=new(baseDir,root);
         if(File.Exists(Path.Combine(root,"accounts.json")))try{accounts=JsonNode.Parse(File.ReadAllText(Path.Combine(root,"accounts.json")))!.AsArray();}catch{}
-        InitializeSuggestions();timer=new(_=>{if(!disposed&&!paused&&B(Configuration,"enabled")&&Selected().Count>0)_=BackgroundSyncAsync();},null,TimeSpan.FromSeconds(8),TimeSpan.FromSeconds(60));
+        InitializeSuggestions();timer=new(_=>{if(!disposed&&!paused&&B(Configuration,"enabled")&&Selected().Count>0)_=BackgroundSyncAsync();},null,Timeout.InfiniteTimeSpan,Timeout.InfiniteTimeSpan);RescheduleSync(startup:true);_=ResumeInitialIndexAsync();
     }
     static bool B(JsonNode? n,string k,bool fallback=false)=>n?[k] is JsonValue v&&v.TryGetValue<bool>(out var b)?b:fallback;
     internal static string S(JsonNode? n,string key,string fallback="")=>WeChatStore.S(n,key,fallback);
     internal static JsonObject Clone(JsonObject o)=>o.DeepClone().AsObject();
     internal static int I(JsonNode? n,string k,int fallback)=>n?[k] is JsonValue v&&v.TryGetValue<int>(out var x)?x:fallback;
-    static JsonObject Defaults()=>new(){["enabled"]=true,["checkReminders"]=true,["checkMinutes"]=60,["archiveFrom"]=DateTime.Today.ToString("yyyy-MM-dd"),["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
+    static JsonObject Defaults()=>new(){["enabled"]=true,["syncMinutes"]=1,["checkReminders"]=true,["checkMinutes"]=60,["archiveFrom"]=DateTime.Today.ToString("yyyy-MM-dd"),["selectedConversationIds"]=new JsonArray(),["bindings"]=new JsonArray()};
     internal static string NormalizeArchiveFrom(string value)
     {
         if(value is "" or "all")return "all";
@@ -63,10 +63,10 @@ public sealed partial class WeChatService : IDisposable
         var p=Path.Combine(root,"config.json");if(!File.Exists(p))return Defaults();
         try
         {
-            var original=JsonNode.Parse(File.ReadAllText(p))!.AsObject();var next=UpgradeGlobalArchiveDate(original);
+            var original=JsonNode.Parse(File.ReadAllText(p))!.AsObject();var next=UpgradeConfiguration(original);
             if(!JsonNode.DeepEquals(original,next))
             {
-                var previous=Path.Combine(root,"config.pre-global-date.json");if(!File.Exists(previous))File.Copy(p,previous);
+                var previous=Path.Combine(root,original["archiveFrom"]==null?"config.pre-global-date.json":"config.pre-v15.json");if(!File.Exists(previous))File.Copy(p,previous);
                 WriteJson(p,next);
             }
             return next;
@@ -81,6 +81,7 @@ public sealed partial class WeChatService : IDisposable
         {
             var next=Clone(config);
             next["enabled"]=B(incoming,"enabled",B(config,"enabled",true));
+            next["syncMinutes"]=NormalizeSyncMinutes(incoming["syncMinutes"],NormalizeSyncMinutes(config["syncMinutes"]));
             next["checkReminders"]=B(incoming,"checkReminders",B(config,"checkReminders",true));
             next["archiveFrom"]=NormalizeArchiveFrom(S(incoming,"archiveFrom",S(config,"archiveFrom",DateTime.Today.ToString("yyyy-MM-dd"))));
             var minutes=I(incoming,"checkMinutes",I(config,"checkMinutes",60));if(minutes==0)next["checkReminders"]=false;next["checkMinutes"]=minutes==0?60:Math.Clamp(minutes,5,1440);
@@ -88,7 +89,7 @@ public sealed partial class WeChatService : IDisposable
             if(incoming["bindings"] is JsonArray bindings)next["bindings"]=new JsonArray(bindings.OfType<JsonObject>().Select(ValidateBinding).Cast<JsonNode?>().ToArray());
             WriteJson(Path.Combine(root,"config.json"),next);config=next;
         }
-        Changed();if(!paused&&B(Configuration,"enabled")&&Selected().Count>0)_=BackgroundSyncAsync();
+        RescheduleSync();Changed();if(!paused&&B(Configuration,"enabled")&&Selected().Count>0)_=BackgroundSyncAsync();
     }
     HashSet<string> Selected()=>new((Configuration["selectedConversationIds"] as JsonArray??new()).Select(x=>x?.GetValue<string>()??""),StringComparer.Ordinal);
     JsonObject ValidateBinding(JsonObject item)
@@ -104,7 +105,7 @@ public sealed partial class WeChatService : IDisposable
     void SetStatus(string phase,string summary,string error=""){lock(gate){status["phase"]=phase;status["summary"]=summary;status["error"]=error;}Changed();}
     public JsonObject Snapshot()
     {
-        JsonObject result;lock(gate){var counts=store.Counts();var conversations=store.Conversations();var selected=Selected();foreach(var c in conversations.OfType<JsonObject>())c["selected"]=selected.Contains(S(c,"id"));status["lastSync"]=store.Meta("lastSync");status["embeddingReady"]=embedding.Available;status["indexed"]=counts["indexed"]!.DeepClone();status["total"]=counts["chunks"]!.DeepClone();result=new(){["config"]=config.DeepClone(),["status"]=status.DeepClone(),["accounts"]=new JsonArray(accounts.OfType<JsonObject>().Select(a=>(JsonNode?)new JsonObject{["id"]=S(a,"id"),["name"]=S(a,"name"),["version"]=S(a,"version")}).ToArray()),["conversations"]=conversations,["counts"]=counts};}SnapshotEnricher?.Invoke(result);return result;
+        JsonObject result;lock(gate){var counts=store.Counts();var conversations=store.Conversations();var selected=Selected();foreach(var c in conversations.OfType<JsonObject>())c["selected"]=selected.Contains(S(c,"id"));status["lastSync"]=store.Meta("lastSync");status["embeddingReady"]=embedding.Available;status["indexed"]=counts["indexed"]!.DeepClone();status["total"]=counts["chunks"]!.DeepClone();result=new(){["config"]=config.DeepClone(),["status"]=status.DeepClone(),["accounts"]=new JsonArray(accounts.OfType<JsonObject>().Select(a=>(JsonNode?)new JsonObject{["id"]=S(a,"id"),["name"]=S(a,"name"),["version"]=S(a,"version")}).ToArray()),["conversations"]=conversations,["counts"]=counts};}result["indexProgress"]=ProgressSnapshot();SnapshotEnricher?.Invoke(result);return result;
     }
     public async Task<JsonObject> HandleAsync(string action,JsonObject payload,CancellationToken cancellation=default)
     {
@@ -112,6 +113,8 @@ public sealed partial class WeChatService : IDisposable
         switch(action)
         {
             case "wechat.get":case "wechat.state":return Snapshot();
+            case "wechat.progress":return new(){["progress"]=ProgressSnapshot()};
+            case "wechat.index.retry":return await RetryIndexAsync();
             case "wechat.connect":await ConnectAsync(cancellation);return Snapshot();
             case "wechat.sync":await SyncAsync(cancellation,refreshImages:true);return Snapshot();
             case "wechat.settings.save":SaveConfiguration(payload["config"] as JsonObject??payload);return Snapshot();
@@ -191,15 +194,6 @@ public sealed partial class WeChatService : IDisposable
     {
         if(name.Length==0)return "";if(name!=Path.GetFileName(name)||name.Any(c=>c is '/' or '\\'))throw new InvalidDataException("微信资料路径无效。");return Path.Combine(root,"files",name);
     }
-    async Task IndexInBackgroundAsync()
-    {
-        if(paused||!embedding.Available||!await indexGate.WaitAsync(0))return;
-        try
-        {
-            await Task.Run(()=>{embedding.EnsureIndex(store,store.Meta("vectorDirty")=="1");store.SetMeta("vectorDirty","0");int count=0;while(!paused&&!lifetime.IsCancellationRequested){var pending=store.PendingChunks(24);if(pending.Count==0)break;foreach(var (id,text) in pending){lifetime.Token.ThrowIfCancellationRequested();var vector=embedding.Encode(text,lifetime.Token);store.SetVector(id,vector);embedding.Add(id,vector);count++;}var revision=store.Meta("vectorRevision","0");embedding.SaveIndex();store.SetMeta("indexRevision",revision);Changed();}if(count>0)Changed();},lifetime.Token);
-        }
-        catch(OperationCanceledException){}catch(Exception e){lock(gate)status["indexError"]=e.Message;Changed();}finally{indexGate.Release();}
-    }
     async Task<JsonObject> SearchAsync(JsonObject payload,CancellationToken ct)
     {
         var query=S(payload,"query").Trim();if(query.Length==0)return new(){["results"]=new JsonArray()};if(query.Length>2000)query=query[..2000];string conv=S(payload,"conversationId"),kind=S(payload,"kind");DateTimeOffset.TryParse(S(payload,"from"),out var from);DateTimeOffset.TryParse(S(payload,"to"),out var to);long fromMs=from==default?long.MinValue:from.ToUnixTimeMilliseconds(),throughMs=to==default?long.MaxValue:to.AddDays(1).ToUnixTimeMilliseconds();
@@ -216,7 +210,7 @@ public sealed partial class WeChatService : IDisposable
         }
         _=IndexInBackgroundAsync();return new(){["results"]=results,["warning"]=warning,["indexing"]=store.Counts()["chunks"]!.GetValue<long>()>store.Counts()["indexed"]!.GetValue<long>(),["keywordCandidateCount"]=keyword.Count,["semanticCandidateCount"]=semantic.Count};
     }
-    public async Task PauseForRestoreAsync(){paused=true;await syncGate.WaitAsync();await indexGate.WaitAsync();}
-    public void ResumeAfterRestore(){lock(gate){config=ReadConfig();store.Reload();embedding.Reset();}indexGate.Release();syncGate.Release();paused=false;Changed();}
+    public async Task PauseForRestoreAsync(){paused=true;RescheduleSync();await syncGate.WaitAsync();await indexGate.WaitAsync();UpdateIndexProgress("paused",false,force:true);}
+    public void ResumeAfterRestore(){lock(gate){config=ReadConfig();store.Reload();embedding.Reset();}indexGate.Release();syncGate.Release();paused=false;RescheduleSync();Changed();_=IndexInBackgroundAsync();}
     public void Dispose(){if(disposed)return;disposed=true;paused=true;timer.Dispose();lifetime.Cancel();DisposeSuggestions();_ = Task.Run(async()=>{await syncGate.WaitAsync();await indexGate.WaitAsync();embedding.Dispose();store.Dispose();lifetime.Dispose();});}
 }

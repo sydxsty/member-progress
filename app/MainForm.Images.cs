@@ -14,17 +14,18 @@ public sealed partial class MainForm
             !uri.Host.Equals(MediaHost, StringComparison.OrdinalIgnoreCase)) return false;
         bool wechat = uri.AbsolutePath.StartsWith("/wechat-image/", StringComparison.Ordinal);
         bool archive = uri.AbsolutePath.StartsWith("/archive-image/", StringComparison.Ordinal);
-        if (!wechat && !archive) return false;
+        bool assistant = uri.AbsolutePath.StartsWith("/assistant-image/", StringComparison.Ordinal);
+        if (!wechat && !archive && !assistant) return false;
         try
         {
-            string id = Uri.UnescapeDataString(uri.AbsolutePath[(wechat ? "/wechat-image/".Length : "/archive-image/".Length)..]);
+            string id = Uri.UnescapeDataString(uri.AbsolutePath[(wechat ? "/wechat-image/".Length : assistant ? "/assistant-image/".Length : "/archive-image/".Length)..]);
             (string Path, string Mime)? image = null;
             if (id.Length is > 0 and <= 200 && !id.Any(c => c is '/' or '\\'))
             {
                 if (wechat) image = _wechat?.ResolvePreviewImage(id);
                 else
                 {
-                    var path = _service.ResolveAttachment(id);
+                    var path = assistant ? _assistant?.ResolveChatAttachment(id) : _service.ResolveAttachment(id);
                     if (path != null && MediaPreview.Mime(path) is { Length: > 0 } mime) image = (path, mime);
                 }
             }

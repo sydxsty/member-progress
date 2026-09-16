@@ -51,6 +51,7 @@ public sealed partial class WeChatService
     public static void ValidateSettingsBackup(string path)
     {
         var value = ReadSmallBackup(path);
+        NormalizeSyncMinutes(value["syncMinutes"]);
         if (value.ContainsKey("archiveFrom")) NormalizeArchiveFrom(Text(value["archiveFrom"]));
         foreach (string field in new[] { "enabled", "checkReminders" })
             if (value[field] is not null && (value[field] is not JsonValue flag || !flag.TryGetValue<bool>(out _))) throw new InvalidDataException("微信设置中的开关格式无效。");
@@ -207,8 +208,10 @@ monthDay仅每月提醒填写，intervalDays仅间隔提醒填写，其余无关
 """;
             using var runtime = new CodexRuntime(Path.Combine(Path.GetDirectoryName(root)!, "assistant"), AppContext.BaseDirectory);
             var runner = new CodexRunner();
-            await using var readSession = OpenReadSession?.Invoke(workspace, source.Token);
-            string raw = await runner.RunArchiveAsync(runtime.Executable, workspace, agentConnectionProvider!(),
+            await using var readSession = NativeReads == null ? OpenReadSession?.Invoke(workspace, source.Token) : null;
+            string raw = NativeReads != null
+                ? await NativeReads.RunAsync(runner, runtime.Executable, workspace, agentConnectionProvider!(), instructions + "\n每条新建议的sourceMessageIds只使用本轮新增消息ID；其他查询资料仅用于核对。", source.Token).ConfigureAwait(false)
+                : await runner.RunArchiveAsync(runtime.Executable, workspace, agentConnectionProvider!(),
                 instructions + (readSession == null ? "" : "\n" + AssistantReadSession.Instructions + "\n本轮新增消息是重点线索，可查其他历史帮助核对；每条新建议的 sourceMessageIds 只填写本轮新增消息中的 ID；其他历史仅供核对。"), source.Token).ConfigureAwait(false);
             var output = ParseSuggestionOutput(raw);
             var sources = messages.OfType<JsonObject>().ToDictionary(m => Text(m["id"]), m => m, StringComparer.Ordinal);

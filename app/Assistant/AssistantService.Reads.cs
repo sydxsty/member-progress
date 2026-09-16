@@ -19,8 +19,10 @@ public sealed partial class AssistantService
             {
                 ["id"] = m.Id, ["role"] = m.Role, ["text"] = m.Text,
                 ["createdAt"] = System.Text.Json.JsonSerializer.SerializeToNode(m.CreatedAt, AssistantJson.Options),
-                ["references"] = System.Text.Json.JsonSerializer.SerializeToNode(m.References, AssistantJson.Options)
+                ["references"] = System.Text.Json.JsonSerializer.SerializeToNode(m.References, AssistantJson.Options),
+                ["attachments"] = System.Text.Json.JsonSerializer.SerializeToNode(m.Attachments, AssistantJson.Options)
             }).ToArray());
+            foreach(var row in items.OfType<JsonObject>())SanitizeAttachmentMessage(row);
             bool more = offset + items.Count < matches.Count;
             return new JsonObject { ["items"] = items, ["total"] = matches.Count, ["offset"] = offset, ["limit"] = limit,
                 ["hasMore"] = more, ["nextOffset"] = more ? offset + items.Count : null };

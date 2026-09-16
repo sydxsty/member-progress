@@ -4,7 +4,7 @@
 
 用于跟进成员与项目进度的 Windows 本地桌面应用。记一条进展、拖动任务日期或勾选完成，软件负责保存归档、生成摘要和到点提醒。
 
-当前版本：**1.0.14**。不需要应用账号，首次打开为空白列表。
+当前版本：**1.0.15**。不需要应用账号，首次打开为空白列表。
 
 ## 功能
 
@@ -13,8 +13,8 @@
 - **追加式归档**：发送文本、文件并生成摘要；可删除单条消息并撤销。原生 Codex 按需分析原附件、图片和相关完整历史。
 - **项目协作**：按成员组成项目，共享任务与归档，成员行显示参与项目。
 - **提醒**：全局、成员、项目提醒及每天、每周、每月、间隔重复；默认取消本次，整个提醒单独开关；甘特图标注，静音 Windows 通知。
-- **GPT 聊天**：自主查询全库成员、任务、日程、归档与文件，按需搜索微信原文及本地向量索引；引用作为重点线索；设置当前用户后自然语言创建个人提醒、日期任务，支持清空与撤销清空会话。
-- **微信只读插件**：选择本机好友或群，完整导入并增量同步；独立聊天与文件库、图片解码与预览、BGE-M3 FP32 相似度检索、归档/GPT 原文引用、成员关联自动归档及遗漏提醒单卡建议。设置并入 APP 设置，微信资料单独导出。
+- **GPT 聊天**：自主查询全库成员、任务、日程、归档与文件，按需搜索微信原文及本地向量索引；引用作为重点线索；设置当前用户后自然语言创建个人提醒、日期任务，支持聊天附件、按指令归档、流式工作过程、真实上下文用量、原生连续会话及清空撤销。
+- **微信只读插件**：选择本机好友或群，完整导入并增量同步；独立聊天与文件库、图片解码与预览、BGE-M3 FP32 相似度检索、归档/GPT 原文引用、成员关联自动归档及遗漏提醒单卡建议。微信页展示后台索引阶段、实际百分比和当前处理对象；设置可调整自动同步间隔，微信资料单独导出。
 - **本地资料**：自动保存、附件复制、完整备份与恢复；密钥由 Windows 加密保存。
 
 ## Android 手机端
@@ -50,7 +50,7 @@ dotnet publish app/StudentProgress.csproj -c Release -r win-x64 --self-contained
 
 源码仓库不存放 Codex CLI 二进制。首次从源码启动后，在 **设置 → GPT 聊天内核 → 更新内核** 下载官方稳定版；应用会校验 SHA512 后启用。自动更新默认关闭。已交付便携版随附的初始版本为 **0.154.0**，对应版本及完整性信息保存在 `app/runtime/codex/bundled.json`。
 
-GPT 摘要和聊天需要在设置中配置可用的模型接口。不开启 GPT 也可管理成员、任务、归档与提醒；使用 GPT 时，所选上下文会发送到配置的接口。
+GPT 摘要和聊天仅使用 Responses API，在设置中配置可用的接口、模型与密钥。不开启 GPT 也可管理成员、任务、归档与提醒；使用 GPT 时，所选上下文会发送到配置的接口。
 
 资料默认保存在可执行文件旁的 `Data` 目录。开发时可使用独立目录：
 
@@ -80,13 +80,12 @@ GPT 摘要和聊天需要在设置中配置可用的模型接口。不开启 GPT
 
 ## 检查
 
-下面两项离线检查不调用 GPT。它们会创建检查记录，务必使用独立目录：
+v15 定向检查在独立空目录运行，不调用 GPT、不读取实际微信：
 
 ```powershell
-Start-Process .\artifacts\portable\StudentProgress.exe -ArgumentList '--assistant-reminders-test --data-dir artifacts/checks/reminders' -Wait
-Start-Process .\artifacts\portable\StudentProgress.exe -ArgumentList '--assistant-actions-test --data-dir artifacts/checks/assistant' -Wait
+Start-Process .\artifacts\portable\StudentProgress.exe -ArgumentList '--v15-test --data-dir artifacts/checks/v15' -Wait
 ```
 
-结果分别写入指定目录中的 `reminder-result.json` 与 `assistant-action-result.json`。带 `live-test` 的入口会调用真实模型，需要单独配置，不作为默认检查。
+结果写入该目录的 `v15-result.json`，覆盖微信进度/间隔、聊天附件备份恢复、原生工具创建与幂等、上下文统计。`--v15-live-test` 是显式启用的单次真实 Codex 合成资料联调，不能作为默认检查自动执行。
 
 仓库仅保存源码、文档与选定的图片；个人资料、API 密钥、编译缓存、Codex 二进制及本机交付包均被忽略。

@@ -49,11 +49,13 @@ public sealed partial class AssistantService : IDisposable
             var messages=System.Text.Json.JsonSerializer.SerializeToNode(state.Messages,AssistantJson.Options)!.AsArray();
             foreach(var message in messages.OfType<JsonObject>())
             {
-                message.Remove("awaitingReminderDetails");message.Remove("reminderRequestText");
+                message.Remove("awaitingReminderDetails");message.Remove("reminderRequestText");message.Remove("toolReceipts");
+                SanitizeAttachmentMessage(message);
             }
             return new JsonObject
             {
                 ["messages"] = messages,
+                ["activity"] = activity.DeepClone(),
                 ["busy"] = currentRequest != null || clearing,
                 ["canUndoClear"] = !clearing && state.Messages.Count == 0 && state.ClearedMessages.Count > 0,
                 ["error"] = state.Error,
@@ -109,6 +111,10 @@ public sealed partial class AssistantService : IDisposable
         {
             if (currentRequest != null || clearing) throw new InvalidOperationException("请先停止当前回答，再恢复聊天记录。");
             state=store.Load();
+            state.NativeThreadId=""; state.ClearedNativeThreadId="";
+            state.SessionId=Guid.NewGuid().ToString("N");
+            activity=new JsonObject { ["phase"]="idle",["items"]=new JsonArray(),["text"]="" };
+            store.SaveHistory(state);
         }
         Notify();
     }
@@ -145,8 +151,11 @@ public sealed partial class AssistantService : IDisposable
                     {
                         next.ClearedMessages=next.Messages;
                         next.ClearedError=next.Error;
+                        next.ClearedSessionId=next.SessionId;next.ClearedNativeThreadId=next.NativeThreadId;
                     }
                     next.Messages=[]; next.Error="";next.Interrupted=false;
+                    next.SessionId=Guid.NewGuid().ToString("N");next.NativeThreadId="";
+                    activity=new JsonObject { ["phase"]="idle",["items"]=new JsonArray(),["text"]="" };
                     AddMobileReceipt(next, mobileRequest);
                     store.SaveHistory(next); state=next;
                 }
@@ -168,6 +177,8 @@ public sealed partial class AssistantService : IDisposable
                 throw new InvalidOperationException("当前没有可恢复的会话；发送新问题后无法撤销清空。");
             var next=CopyState(state);
             next.Messages=next.ClearedMessages;next.Error=next.ClearedError;
+            next.SessionId=next.ClearedSessionId.Length>0?next.ClearedSessionId:Guid.NewGuid().ToString("N");next.NativeThreadId=next.ClearedNativeThreadId;
+            next.ClearedSessionId="";next.ClearedNativeThreadId="";
             next.ClearedMessages=[];next.ClearedError="";
             AddMobileReceipt(next, mobileRequest);
             store.SaveHistory(next);state=next;
@@ -193,8 +204,12 @@ public sealed partial class AssistantService : IDisposable
             {
                 user=next.Messages.LastOrDefault(m=>m.Role=="user"&&m.Id==retryId)
                     ??throw new InvalidOperationException("原问题不存在，请重新发送。");
-                if(next.Messages.LastOrDefault()?.Id!=retryId)
-                    throw new InvalidOperationException("只能重试最近一条尚未得到回答的问题。");
+                int userAt=next.Messages.FindIndex(m=>m.Id==retryId);
+                if(next.Messages.Skip(userAt+1).Any(m=>m.Role!="assistant"||m.ReplyToMessageId!=retryId)||
+                    userAt<next.Messages.Count-1&&next.Error.Length==0)
+                    throw new InvalidOperationException("只能重试最近一条未完成的问题。");
+                // Keep durable tool receipts on the user message while replacing a partial reply.
+                if(userAt<next.Messages.Count-1)next.Messages.RemoveRange(userAt+1,next.Messages.Count-userAt-1);
                 if(payload.ContainsKey("text")&&AssistantJson.Text(payload["text"]).Trim()!=user.Text||
                     payload.ContainsKey("includeReminders")&&payload["includeReminders"]?.GetValue<bool>()!=user.IncludeReminders||
                     payload.ContainsKey("includeRecent")&&payload["includeRecent"]?.GetValue<bool>()!=user.IncludeRecent)
@@ -205,36 +220,30 @@ public sealed partial class AssistantService : IDisposable
                     if(!requested.Select(r=>r.ScopeType+":"+r.ScopeId).SequenceEqual(user.References.Select(r=>r.ScopeType+":"+r.ScopeId)))
                         throw new InvalidOperationException("重试的引用已发生变化，请作为新问题发送。");
                 }
-                if(AssistantResponse.IsPlanOnly(user.Text))user.ReminderRequestText="";
-                else if(user.ReminderRequestText.Length==0&&AssistantResponse.HasExplicitCreationRequest(user.Text))user.ReminderRequestText=user.Text;
                 previous=next.Messages.Take(next.Messages.Count-1).ToList();
             }
             else
             {
                 string text=AssistantJson.Text(payload["text"]).Trim();
-                if(string.IsNullOrEmpty(text))throw new InvalidOperationException("先写下想问的问题。");
+                if(string.IsNullOrEmpty(text)&&(payload["files"] as JsonArray)?.Count is not >0)throw new InvalidOperationException("写下问题或添加附件。");
                 if(text.Length>20_000)throw new InvalidOperationException("问题过长，请缩短到 20000 字以内；长资料可以引用归档。");
                 user=new(){Role="user",Text=text,References=ReadReferences(payload),
                     IncludeReminders=payload["includeReminders"]?.GetValue<bool>()??true,
                     IncludeRecent=payload["includeRecent"]?.GetValue<bool>()??true};
                 previous=next.Messages.ToList();
-                if(AssistantResponse.HasExplicitCreationRequest(text))user.ReminderRequestText=text;
-                else if(previous.LastOrDefault() is {Role:"assistant",AwaitingReminderDetails:true} pending&&pending.ReminderRequestText.Length>0)
-                {
-                    var names=contextProvider(new JsonObject{["includeReminders"]=false,["includeRecent"]=false,["references"]=new JsonArray()});
-                    if(AssistantResponse.IsReminderDetailReply(text,names))user.ReminderRequestText=pending.ReminderRequestText;
-                }
+                user.Attachments=SaveAttachments(payload,user.Id);
                 next.Messages.Add(user);
-                next.ClearedMessages=[];next.ClearedError="";
+                next.ClearedMessages=[];next.ClearedError="";next.ClearedSessionId="";next.ClearedNativeThreadId="";
             }
             var selection=new JsonObject{["includeReminders"]=user.IncludeReminders,["includeRecent"]=user.IncludeRecent,
                 ["references"]=System.Text.Json.JsonSerializer.SerializeToNode(user.References,AssistantJson.Options)};
             next.Error="";next.Interrupted=true;
             AddMobileReceipt(next, mobileRequest);
-            store.SaveHistory(next);state=next;
+            try { store.SaveHistory(next);state=next; }
+            catch { if(retryId.Length==0)DiscardUncommittedAttachments(user.Attachments);throw; }
             currentRequest=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
             var request=currentRequest;
-            activeTask=Task.Run(()=>CompleteRequestAsync(user,previous,selection,request));
+            activeTask=Task.Run(()=>CompleteNativeRequestAsync(user,previous,selection,request));
         }
         Notify();return Snapshot();
     }
@@ -250,112 +259,6 @@ public sealed partial class AssistantService : IDisposable
         }
         if(references.Count>40)throw new InvalidOperationException("请一次引用不超过 40 份归档。");
         return references;
-    }
-    private async Task CompleteRequestAsync(AssistantMessage user,List<AssistantMessage> previous,JsonObject selection,CancellationTokenSource request)
-    {
-        AssistantResponse? response=null;
-        JsonObject? context=null;
-        string error="";
-        string? materialsDirectory=null;
-        AssistantReadSession? readSession=null;
-        try
-        {
-            request.Token.ThrowIfCancellationRequested();
-            context=contextProvider(selection);
-            bool hasReferences = PrepareMaterialsAsync != null && (selection["references"] as JsonArray)?.Count > 0;
-            bool globalReads = ReadDataAsync != null;
-            bool nativeMaterials = hasReferences || globalReads;
-            if (nativeMaterials)
-            {
-                materialsDirectory=Path.Combine(workRoot,"materials-"+Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(materialsDirectory);
-                var materialContext=hasReferences
-                    ?await PrepareMaterialsAsync!(selection,materialsDirectory,request.Token).ConfigureAwait(false)
-                    :new JsonObject { ["references"]=new JsonArray() };
-                AssistantJson.WriteAtomic(Path.Combine(materialsDirectory,"chat-history.json"),previous);
-                context["referencedArchives"]=materialContext["references"]?.DeepClone()??new JsonArray();
-                context["materials"]=materialContext;
-                if(globalReads)readSession=new AssistantReadSession(materialsDirectory,ReadApiDescription,ReadDataAsync!,request.Token);
-            }
-            string prompt=AssistantPrompt.Build(user.Text,previous,context,reminderCreator!=null,user.ReminderRequestText,nativeMaterials,globalReads,selection);
-            string output=responseProvider!=null
-                ?await responseProvider(prompt,request.Token).ConfigureAwait(false)
-                :nativeMaterials
-                    ?await runner.RunArchiveAsync(runtime.Executable,materialsDirectory!,connectionProvider(),prompt,request.Token).ConfigureAwait(false)
-                    :await runner.RunAsync(runtime.Executable,workRoot,connectionProvider(),prompt,request.Token).ConfigureAwait(false);
-            request.Token.ThrowIfCancellationRequested();
-            response=AssistantResponse.Parse(output);
-        }
-        catch(OperationCanceledException){error="回答已取消，问题已保留。";}
-        catch(Exception e) when(e is InvalidOperationException or TimeoutException or IOException or System.Text.Json.JsonException){error=e.Message;}
-        catch{error="GPT 暂时无法完成回答，问题已保留，请重试。";}
-        finally
-        {
-            if(readSession!=null)
-            {
-                await readSession.DisposeAsync().ConfigureAwait(false);
-                if(readSession.Failure.Length>0){response=null;error=readSession.Failure;}
-            }
-            if(materialsDirectory!=null)try{Directory.Delete(materialsDirectory,true);}catch(IOException){}catch(UnauthorizedAccessException){}
-        }
-        lock(sync)
-        {
-            if(currentRequest!=request)return;
-            var results=new List<AssistantReminderResult>();
-            var taskResults=new List<AssistantTaskResult>();
-            string answer="";
-            try
-            {
-                // Cancellation/clear and the short atomic host write share this lock. A request
-                // cancelled before this boundary cannot commit, and clear waits for persistence.
-                if(request.IsCancellationRequested){response=null;error="回答已取消，问题已保留。";}
-                if(response!=null)
-                {
-                    if(response.Reminders.Count>0||response.Tasks.Count>0)
-                    {
-                        if(reminderCreator==null||user.ReminderRequestText.Length==0||AssistantResponse.IsPlanOnly(user.Text))
-                            answer="本次未创建提醒或任务。需要创建时，请直接告诉我事项和日期或时间。";
-                        else
-                        {
-                            request.Token.ThrowIfCancellationRequested();
-                            response=AssistantTargets.Resolve(response,user.ReminderRequestText+"\n"+user.Text,context!);
-                            var changes=new JsonObject{["requestId"]=user.Id,["reminders"]=response.Reminders.DeepClone(),["tasks"]=response.Tasks.DeepClone()};
-                            string currentId=AssistantJson.Text(context?["currentUser"]?["id"]);
-                            if(currentId.Length>0&&(response.Reminders.OfType<JsonObject>().Any(r=>AssistantJson.Text(r["studentId"])==currentId)||
-                                response.Tasks.OfType<JsonObject>().Any(t=>t["studentIds"] is JsonArray ids&&ids.Any(id=>AssistantJson.Text(id)==currentId))))
-                                changes["expectedCurrentStudentId"]=currentId;
-                            var receipt=reminderCreator(changes);
-                            results=AssistantResponse.ReadReceipt(receipt);
-                            taskResults=AssistantResponse.ReadTaskReceipt(receipt);
-                            if(results.Count+taskResults.Count is <1 or >8)throw new InvalidOperationException("操作没有返回完整结果，请查看任务和提醒列表。");
-                            string created=string.Join("、",new[]{results.Count>0?$"{results.Count} 条提醒":"",taskResults.Count>0?$"{taskResults.Count} 个任务":""}.Where(x=>x.Length>0));
-                            answer=receipt["replayed"]?.GetValue<bool>()==true
-                                ?$"这条请求已创建 {created}，本次没有重复添加。"
-                                :$"已创建 {created}。";
-                        }
-                    }
-                    else answer=AssistantResponse.SafeAdvice(response.Text);
-                }
-            }
-            catch(OperationCanceledException){error="回答已取消，问题已保留。";}
-            catch(Exception e) when(e is InvalidOperationException or IOException or System.Text.Json.JsonException){error=e.Message;}
-            catch{error="本次操作未能完成，请查看任务和提醒列表后重试。";}
-            var next=CopyState(state);
-            if(answer.Length>0)next.Messages.Add(new(){Role="assistant",Text=answer,ReplyToMessageId=user.Id,ReminderResults=results,TaskResults=taskResults,
-                AwaitingReminderDetails=response?.NeedsReminderDetails==true&&reminderCreator!=null&&user.ReminderRequestText.Length>0,
-                ReminderRequestText=response?.NeedsReminderDetails==true&&reminderCreator!=null?user.ReminderRequestText:""});
-            next.Error=error;next.Interrupted=false;
-            try{store.SaveHistory(next);state=next;}
-            catch(Exception e) when(e is IOException or UnauthorizedAccessException)
-            {
-                // Keep both old disk history and in-memory messages intact. A retry reuses the
-                // saved user id, so a committed host receipt cannot create duplicate reminders.
-                state.Error=results.Count+taskResults.Count>0?"提醒或任务已创建，但回答暂时无法写入本机；重试不会重复创建。":"本次聊天暂时无法写入本机，请检查磁盘空间或资料目录权限。";
-                state.Interrupted=false;
-            }
-            currentRequest=null;request.Dispose();
-        }
-        Notify();
     }
     private void StartMaintenance(bool install,bool automatic)
     {

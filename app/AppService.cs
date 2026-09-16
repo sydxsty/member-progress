@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -14,7 +13,6 @@ public sealed partial class AppService : IDisposable
     bool disposed;
     readonly Dictionary<string, CancellationTokenSource> pending = new();
     readonly Dictionary<string, long> revisions = new();
-    readonly HttpClient client = new() { Timeout = TimeSpan.FromSeconds(90) };
     public event Action? StateChanged;
 
     public AppService(string dataRoot)
@@ -100,6 +98,7 @@ public sealed partial class AppService : IDisposable
         s["settings"] ??= EmptyState()["settings"]!.DeepClone();
         s["status"] ??= EmptyState()["status"]!.DeepClone();
         if(s["settings"] is not JsonObject || s["status"] is not JsonObject) throw new InvalidDataException("配置格式无效。");
+        s["settings"]!["apiMode"]="responses"; // Migrate legacy connection mode without altering endpoint or credentials.
         if(((JsonArray)s["deletedMessages"]!).OfType<JsonObject>().Any(x=>x["message"] is not JsonObject m||S(x,"id").Length==0||S(x,"id")!=S(m,"id")))
             throw new InvalidDataException("已删除的归档记录格式无效。");
         foreach(var msg in AllArchiveMessages(s))
@@ -480,5 +479,5 @@ public sealed partial class AppService : IDisposable
         }
     }
     static bool SafeStoredName(string name) => name.Length is >0 and <100 && name.All(c=>char.IsAsciiLetterOrDigit(c)||c=='.'||c=='-'||c=='_') && name is not ("." or "..") && !name.Contains("..");
-    public void Dispose(){lock(gate){disposed=true;foreach(var c in pending.Values)c.Cancel();pending.Clear();client.Dispose();}}
+    public void Dispose(){lock(gate){disposed=true;foreach(var c in pending.Values)c.Cancel();pending.Clear();}}
 }
